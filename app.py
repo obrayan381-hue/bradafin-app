@@ -715,6 +715,42 @@ def kpi_card(label, value, foot="", variant="green"):
     )
 
 
+def aplicar_grafica_premium_oscura(fig, height=340):
+    """Aplica fondo oscuro premium a gráficas Plotly para mejorar contraste visual."""
+    fig.update_layout(
+        height=height,
+        paper_bgcolor="#0B1612",
+        plot_bgcolor="#0B1612",
+        font=dict(color="#F8FFF8"),
+        title_font=dict(color="#FFFFFF", size=18),
+        margin=dict(l=28, r=24, t=58, b=52),
+        xaxis=dict(
+            color="#EAF8F1",
+            title_font=dict(color="#EAF8F1"),
+            tickfont=dict(color="#EAF8F1"),
+            gridcolor="rgba(255,255,255,.10)",
+            zerolinecolor="rgba(242,209,107,.32)",
+            linecolor="rgba(255,255,255,.18)",
+        ),
+        yaxis=dict(
+            color="#EAF8F1",
+            title_font=dict(color="#EAF8F1"),
+            tickfont=dict(color="#EAF8F1"),
+            gridcolor="rgba(255,255,255,.14)",
+            zerolinecolor="rgba(242,209,107,.32)",
+            linecolor="rgba(255,255,255,.18)",
+        ),
+        hoverlabel=dict(
+            bgcolor="#102019",
+            font=dict(color="#FFFFFF"),
+            bordercolor="#D4A017",
+        ),
+    )
+    fig.update_xaxes(showgrid=False, automargin=True)
+    fig.update_yaxes(showgrid=True, automargin=True)
+    return fig
+
+
 def normalizar_fecha(df, cols=("fecha",)):
     df = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
     for col in cols:
@@ -1553,7 +1589,7 @@ def render_inicio(negocio, user_id, df_movs, df_cuentas, df_productos):
             {"métrica":"Utilidad", "valor": metricas["utilidad_estimada"]},
         ])
         fig = px.bar(df_chart, x="métrica", y="valor", title="Balance del mes")
-        fig.update_layout(height=340, paper_bgcolor="white", plot_bgcolor="white", font=dict(color="#102019"), title_font=dict(color="#102019"), margin=dict(l=20,r=20,t=55,b=40))
+        aplicar_grafica_premium_oscura(fig, height=340)
         fig.update_traces(marker_color=["#1F6B4F", "#D4A017", "#C2410C", "#2F8F6B"])
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         st.markdown("</div>", unsafe_allow_html=True)
@@ -1902,7 +1938,7 @@ def render_inventario(negocio, user_id, df_productos, df_movs):
             show["margen_%"] = show["margen_%"].map(lambda x: f"{x*100:.1f}%")
             st.dataframe(show, use_container_width=True, hide_index=True)
             fig = px.bar(dfp.sort_values("rotación", ascending=False).head(10), x="nombre", y="rotación", title="Productos con mayor rotación")
-            fig.update_layout(height=330, paper_bgcolor="white", plot_bgcolor="white", font=dict(color="#102019"), title_font=dict(color="#102019"), margin=dict(l=20,r=20,t=55,b=40))
+            aplicar_grafica_premium_oscura(fig, height=330)
             fig.update_traces(marker_color="#1F6B4F")
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         st.markdown("</div>", unsafe_allow_html=True)
@@ -1943,7 +1979,7 @@ def render_reportes(negocio, user_id, df_movs, df_cuentas, df_productos):
     ])
     fig = px.bar(df_chart, x="concepto", y="valor", title="Rentabilidad monetaria")
     fig.update_traces(marker_color=["#1F6B4F", "#D4A017", "#C2410C", "#2F8F6B"])
-    fig.update_layout(height=360, paper_bgcolor="white", plot_bgcolor="white", font=dict(color="#102019"), title_font=dict(color="#102019"), margin=dict(l=20,r=20,t=55,b=40))
+    aplicar_grafica_premium_oscura(fig, height=360)
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
     col1,col2 = st.columns(2)
