@@ -1342,6 +1342,7 @@ def render_auth():
     col_left, col_right = st.columns([1.05, .95], gap="large")
     with col_left:
         render_logo_header(width_full=340, width_icon=96, show_name_fallback=False)
+        st.markdown("<div style='height:0.85rem;'></div>", unsafe_allow_html=True)
         st.markdown(
             f"""
             <div class='hero-card'>
