@@ -1002,47 +1002,82 @@ def aplicar_estilo_bradafin():
         /* WHATSAPP PREMIUM PREVIEW */
         /* =================================================== */
         .whatsapp-preview {
-            border-radius: 26px;
-            padding: 1.05rem 1.1rem;
-            margin: .75rem 0 1rem 0;
+            border-radius: 28px;
+            padding: 1.05rem;
+            margin: .8rem 0 1rem 0;
             background:
-                radial-gradient(circle at 16% 14%, rgba(242,209,107,.18), transparent 34%),
-                linear-gradient(135deg, #102019 0%, #14513D 55%, #1F6B4F 78%, #D4A017 100%);
-            border: 1px solid rgba(255,255,255,.18);
-            box-shadow: 0 22px 44px rgba(16,32,25,.22);
+                radial-gradient(circle at 14% 12%, rgba(242,209,107,.18), transparent 35%),
+                linear-gradient(135deg, #0B1612 0%, #14513D 56%, #1F6B4F 82%, #D4A017 100%);
+            border: 1px solid rgba(255,255,255,.16);
+            box-shadow: 0 24px 48px rgba(16,32,25,.22);
         }
         .whatsapp-preview,
         .whatsapp-preview * {
             color: #FFFFFF !important;
         }
+        .whatsapp-preview-top {
+            display:flex;
+            justify-content:space-between;
+            gap:.85rem;
+            align-items:flex-start;
+            margin-bottom:.8rem;
+        }
         .whatsapp-preview-title {
             font-size: 1.02rem;
             font-weight: 950;
             letter-spacing: -.02em;
-            display:flex;
-            align-items:center;
-            gap:.45rem;
-            margin-bottom:.35rem;
+            margin-bottom:.25rem;
         }
         .whatsapp-preview-sub {
-            color: rgba(255,255,255,.78) !important;
-            font-size:.86rem;
-            line-height:1.45;
-            margin-bottom:.8rem;
+            color: rgba(255,255,255,.80) !important;
+            font-size:.84rem;
+            line-height:1.42;
+        }
+        .whatsapp-preview-chip {
+            white-space:nowrap;
+            border-radius:999px;
+            padding:.35rem .65rem;
+            font-size:.75rem;
+            font-weight:950;
+            color:#102019 !important;
+            background:rgba(255,255,255,.90);
+            border:1px solid rgba(242,209,107,.34);
         }
         .whatsapp-bubble {
-            background: rgba(255,255,255,.94);
-            color: #102019 !important;
-            border-radius: 20px 20px 20px 6px;
-            padding: .85rem .95rem;
-            border: 1px solid rgba(212,160,23,.28);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,.70);
-            white-space: normal;
-            line-height: 1.45;
-            font-size: .93rem;
+            background: linear-gradient(180deg, #FFFFFF 0%, #F7FFF9 100%);
+            border-radius: 22px 22px 22px 8px;
+            padding: 1rem 1.05rem;
+            border: 1px solid rgba(212,160,23,.32);
+            box-shadow:
+                0 18px 30px rgba(0,0,0,.12),
+                inset 0 1px 0 rgba(255,255,255,.75);
+            line-height: 1.48;
+            font-size: .94rem;
         }
+        .whatsapp-bubble,
         .whatsapp-bubble * {
             color: #102019 !important;
+        }
+        .wa-brand {
+            font-weight: 950;
+            color:#14513D !important;
+            letter-spacing:-.02em;
+            font-size:1.02rem;
+            margin-bottom:.1rem;
+        }
+        .wa-subject {
+            color:#6B4B00 !important;
+            font-weight:900;
+            margin-bottom:.55rem;
+        }
+        .wa-line {
+            height:1px;
+            background:linear-gradient(90deg, rgba(31,107,79,.24), rgba(212,160,23,.44), transparent);
+            margin:.45rem 0 .65rem 0;
+        }
+        .wa-body {
+            white-space: normal;
+            color:#102019 !important;
         }
         .whatsapp-status {
             display:inline-flex;
@@ -1775,6 +1810,7 @@ def whatsapp_link(telefono, mensaje):
     tel = normalizar_whatsapp_destino(telefono)
     if not tel:
         return ""
+    mensaje = limpiar_texto_whatsapp(mensaje) if "limpiar_texto_whatsapp" in globals() else str(mensaje or "")
     return f"https://wa.me/{tel}?text={urllib.parse.quote(mensaje)}"
 
 
@@ -1810,6 +1846,7 @@ def whatsapp_estado_config():
 
 def enviar_whatsapp_automatico(telefono, mensaje):
     """Envía WhatsApp real con Twilio o Meta Cloud API. Si no está configurado, no rompe la app."""
+    mensaje = limpiar_texto_whatsapp(mensaje)
     destino = normalizar_whatsapp_destino(telefono)
     if not destino:
         return False, "No hay número de WhatsApp válido."
@@ -1876,163 +1913,233 @@ def enviar_whatsapp_automatico(telefono, mensaje):
         return False, f"No pude enviar WhatsApp automático: {e}"
 
 
-def whatsapp_bold(txt):
-    txt = str(txt or "").replace("*", "")
-    return f"*{txt}*"
+def limpiar_texto_whatsapp(texto):
+    """Normaliza mensajes para WhatsApp: saltos reales, sin emojis ni marcadores raros."""
+    texto = str(texto or "")
+    texto = texto.replace("\\n", "\n")
+    texto = texto.replace("\r\n", "\n").replace("\r", "\n")
+    # Quita emojis/símbolos especiales que algunos proveedores muestran como  .
+    texto = re.sub(r"[\U00010000-\U0010ffff]", "", texto)
+    texto = texto.replace("━━━━━━━━━━━━━━", "--------------------")
+    texto = texto.replace("•", "-")
+    # Quita formato markdown de WhatsApp para que el mensaje sea más serio y limpio.
+    texto = texto.replace("*", "").replace("_", "")
+    # Limpia espacios repetidos sin dañar saltos de línea.
+    lineas = [re.sub(r"[ \t]+", " ", linea).strip() for linea in texto.split("\n")]
+    # Evita demasiados saltos seguidos.
+    salida = []
+    vacia_anterior = False
+    for linea in lineas:
+        if not linea:
+            if not vacia_anterior:
+                salida.append("")
+            vacia_anterior = True
+        else:
+            salida.append(linea)
+            vacia_anterior = False
+    return "\n".join(salida).strip()
+
+
+def fecha_corta(valor):
+    try:
+        if valor is not None and pd.notna(valor):
+            return str(pd.to_datetime(valor).date())
+    except Exception:
+        pass
+    return "sin fecha"
+
+
+def whatsapp_footer(negocio=None):
+    nombre_negocio = (negocio or {}).get("nombre", "tu negocio")
+    return f"Mensaje enviado por {nombre_negocio} desde BradaFin."
 
 
 def mensaje_cobro(negocio, cuenta):
     nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
-    venc = "sin fecha"
-    try:
-        if cuenta.get("fecha_vencimiento") is not None and pd.notna(cuenta.get("fecha_vencimiento")):
-            venc = str(pd.to_datetime(cuenta.get("fecha_vencimiento")).date())
-    except Exception:
-        pass
-    return (
-        f"🟢 *{nombre_negocio}*\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        f"Hola {cuenta.get('tercero_nombre','')}, te recordamos un saldo pendiente.\\n\\n"
-        f"💰 *Saldo:* {money(cuenta.get('saldo_pendiente',0))}\\n"
-        f"🧾 *Concepto:* {cuenta.get('concepto','cuenta pendiente')}\\n"
-        f"📅 *Vencimiento:* {venc}\\n\\n"
-        "Puedes abonar o pagar completo. Gracias por mantener tu cuenta al día.\\n"
-        "━━━━━━━━━━━━━━\\n"
-        "_Mensaje enviado desde BradaFin._"
-    )
+    cliente = cuenta.get("tercero_nombre", "") or "cliente"
+    concepto = cuenta.get("concepto", "cuenta pendiente") or "cuenta pendiente"
+    venc = fecha_corta(cuenta.get("fecha_vencimiento"))
+    return limpiar_texto_whatsapp(f"""
+BradaFin | {nombre_negocio}
+Recordatorio de pago
+
+Hola {cliente}.
+
+Tienes un saldo pendiente registrado:
+
+Saldo: {money(cuenta.get('saldo_pendiente', 0))}
+Concepto: {concepto}
+Vencimiento: {venc}
+
+Puedes abonar o pagar completo.
+Gracias por mantener tu cuenta al dia.
+
+{whatsapp_footer(negocio)}
+""")
 
 
 def mensaje_cuenta_creada_cliente(negocio, cuenta):
     nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
-    venc = "sin fecha"
-    try:
-        venc = str(pd.to_datetime(cuenta.get("fecha_vencimiento")).date()) if cuenta.get("fecha_vencimiento") else "sin fecha"
-    except Exception:
-        pass
-    return (
-        f"🟢 *{nombre_negocio}*\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        f"Hola {cuenta.get('tercero_nombre','')}, se registró una cuenta por cobrar.\\n\\n"
-        f"🧾 *Concepto:* {cuenta.get('concepto','Cuenta pendiente')}\\n"
-        f"💰 *Valor:* {money(cuenta.get('monto_total',0))}\\n"
-        f"📅 *Vencimiento:* {venc}\\n\\n"
-        "Puedes realizar un abono o pago completo cuando lo tengas disponible.\\n"
-        "━━━━━━━━━━━━━━\\n"
-        "_Mensaje enviado desde BradaFin._"
-    )
+    cliente = cuenta.get("tercero_nombre", "") or "cliente"
+    concepto = cuenta.get("concepto", "cuenta pendiente") or "cuenta pendiente"
+    venc = fecha_corta(cuenta.get("fecha_vencimiento"))
+    return limpiar_texto_whatsapp(f"""
+BradaFin | {nombre_negocio}
+Cuenta registrada
+
+Hola {cliente}.
+
+Se registró una cuenta por cobrar a tu nombre:
+
+Valor: {money(cuenta.get('monto_total', 0))}
+Concepto: {concepto}
+Vencimiento: {venc}
+
+Puedes realizar un abono o pagar completo cuando lo tengas disponible.
+
+{whatsapp_footer(negocio)}
+""")
 
 
 def mensaje_abono_cliente(negocio, cuenta, monto_abono, nuevo_saldo=0):
     nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
-    return (
-        f"✅ *Abono registrado · {nombre_negocio}*\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        f"Hola {cuenta.get('tercero_nombre','')}, recibimos tu abono.\\n\\n"
-        f"💵 *Abono:* {money(monto_abono)}\\n"
-        f"📌 *Saldo pendiente:* {money(nuevo_saldo)}\\n"
-        f"🧾 *Concepto:* {cuenta.get('concepto','Cuenta pendiente')}\\n\\n"
-        "Gracias por tu pago.\\n"
-        "━━━━━━━━━━━━━━\\n"
-        "_Controlado con BradaFin._"
-    )
+    cliente = cuenta.get("tercero_nombre", "") or "cliente"
+    concepto = cuenta.get("concepto", "cuenta pendiente") or "cuenta pendiente"
+    estado = "Cuenta pagada" if float(nuevo_saldo or 0) <= 0 else "Cuenta abonada"
+    return limpiar_texto_whatsapp(f"""
+BradaFin | {nombre_negocio}
+{estado}
+
+Hola {cliente}.
+
+Recibimos tu abono correctamente:
+
+Abono recibido: {money(monto_abono)}
+Saldo pendiente: {money(nuevo_saldo)}
+Concepto: {concepto}
+
+Gracias por tu pago.
+
+{whatsapp_footer(negocio)}
+""")
 
 
 def mensaje_movimiento_comerciante(negocio, tipo, categoria, monto, fecha_mov, metodo, descripcion="", producto="", cantidad=0):
     nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
-    icono = "🟢" if tipo in ["Venta", "Entrada de caja", "Cobro recibido"] else "🔴" if tipo in ["Gasto operativo", "Salida de caja", "Pago proveedor"] else "🟡"
-    extra = ""
+    fecha_txt = fecha_mov.isoformat() if hasattr(fecha_mov, "isoformat") else str(fecha_mov)
+    lineas_extra = []
     if producto:
-        extra += f"\\n📦 *Producto:* {producto}"
+        lineas_extra.append(f"Producto: {producto}")
     try:
         if float(cantidad or 0) > 0:
-            extra += f"\\n🔢 *Cantidad:* {cantidad:g}"
+            lineas_extra.append(f"Cantidad: {cantidad:g}")
     except Exception:
         pass
-    return (
-        f"{icono} *BradaFin · Movimiento registrado*\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        f"🏪 *Negocio:* {nombre_negocio}\\n"
-        f"📌 *Tipo:* {tipo}\\n"
-        f"🏷️ *Categoría:* {categoria}\\n"
-        f"💰 *Monto:* {money(monto)}\\n"
-        f"💳 *Método:* {metodo}\\n"
-        f"📅 *Fecha:* {fecha_mov.isoformat() if hasattr(fecha_mov, 'isoformat') else fecha_mov}"
-        f"{extra}\\n"
-        f"📝 *Detalle:* {descripcion or 'Sin descripción'}\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        "_Tu negocio quedó actualizado._"
-    )
+    extra = ("\n" + "\n".join(lineas_extra)) if lineas_extra else ""
+    return limpiar_texto_whatsapp(f"""
+BradaFin | {nombre_negocio}
+Movimiento registrado
+
+Tipo: {tipo}
+Categoria: {categoria}
+Monto: {money(monto)}
+Metodo: {metodo}
+Fecha: {fecha_txt}{extra}
+Detalle: {descripcion or 'Sin descripcion'}
+
+Tu negocio quedó actualizado.
+""")
 
 
 def mensaje_caja_comerciante(negocio, fecha_caja, inicial, contado, esperado, estado):
     nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
     diferencia = float(contado or 0) - float(esperado or 0)
-    return (
-        f"💵 *BradaFin · Caja {estado}*\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        f"🏪 *Negocio:* {nombre_negocio}\\n"
-        f"📅 *Fecha:* {fecha_caja.isoformat() if hasattr(fecha_caja, 'isoformat') else fecha_caja}\\n"
-        f"🚪 *Apertura:* {money(inicial)}\\n"
-        f"🧮 *Saldo esperado:* {money(esperado)}\\n"
-        f"🤲 *Saldo contado:* {money(contado)}\\n"
-        f"📊 *Diferencia:* {money(diferencia)}\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        "_Control de caja actualizado._"
-    )
+    fecha_txt = fecha_caja.isoformat() if hasattr(fecha_caja, "isoformat") else str(fecha_caja)
+    return limpiar_texto_whatsapp(f"""
+BradaFin | {nombre_negocio}
+Caja {estado}
+
+Fecha: {fecha_txt}
+Apertura: {money(inicial)}
+Saldo esperado: {money(esperado)}
+Saldo contado: {money(contado)}
+Diferencia: {money(diferencia)}
+
+Control de caja actualizado.
+""")
 
 
 def mensaje_cuenta_comerciante(negocio, cuenta, accion="Cuenta creada"):
     nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
-    return (
-        f"📌 *BradaFin · {accion}*\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        f"🏪 *Negocio:* {nombre_negocio}\\n"
-        f"👤 *Tercero:* {cuenta.get('tercero_nombre','')}\\n"
-        f"📄 *Tipo:* {cuenta.get('tipo','')}\\n"
-        f"🧾 *Concepto:* {cuenta.get('concepto','')}\\n"
-        f"💰 *Valor:* {money(cuenta.get('monto_total', cuenta.get('saldo_pendiente', 0)))}\\n"
-        f"📌 *Saldo:* {money(cuenta.get('saldo_pendiente', 0))}\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        "_Cartera actualizada en BradaFin._"
-    )
+    return limpiar_texto_whatsapp(f"""
+BradaFin | {nombre_negocio}
+{accion}
+
+Tercero: {cuenta.get('tercero_nombre','')}
+Tipo: {cuenta.get('tipo','')}
+Concepto: {cuenta.get('concepto','')}
+Valor: {money(cuenta.get('monto_total', cuenta.get('saldo_pendiente', 0)))}
+Saldo: {money(cuenta.get('saldo_pendiente', 0))}
+
+Cartera actualizada en BradaFin.
+""")
 
 
 def mensaje_resumen_alertas(negocio, alertas, metricas):
     nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
     lineas = []
     for _, txt in (alertas or [])[:5]:
-        lineas.append(f"• {txt}")
-    return (
-        f"🔔 *BradaFin · Resumen de alertas*\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        f"🏪 *Negocio:* {nombre_negocio}\\n"
-        f"💰 *Ventas mes:* {money(metricas.get('ventas',0))}\\n"
-        f"📊 *Utilidad estimada:* {money(metricas.get('utilidad_estimada',0))}\\n"
-        f"📌 *Cartera:* {money(metricas.get('cxc',0))}\\n"
-        f"📦 *Stock bajo:* {metricas.get('stock_bajo',0)}\\n\\n"
-        f"*Señales de hoy:*\\n" + "\\n".join(lineas) + "\\n"
-        f"━━━━━━━━━━━━━━\\n"
-        "_Revise BradaFin para tomar acción._"
-    )
+        lineas.append(f"- {txt}")
+    señales = "\n".join(lineas) if lineas else "- Sin alertas fuertes."
+    return limpiar_texto_whatsapp(f"""
+BradaFin | {nombre_negocio}
+Resumen de alertas
+
+Ventas del mes: {money(metricas.get('ventas',0))}
+Utilidad estimada: {money(metricas.get('utilidad_estimada',0))}
+Cartera por cobrar: {money(metricas.get('cxc',0))}
+Productos con stock bajo: {metricas.get('stock_bajo',0)}
+
+Señales de hoy:
+{señales}
+
+Revise BradaFin para tomar accion.
+""")
+
 
 
 def render_whatsapp_preview(titulo, mensaje, telefono="", estado="listo", detalle=""):
     status_class = "ok" if estado == "enviado" else "err" if estado == "error" else "warn"
     estado_txt = "Enviado automáticamente" if estado == "enviado" else "No enviado automáticamente" if estado == "error" else "Listo para enviar"
-    cuerpo = safe(mensaje).replace("\\n", "<br>")
+    mensaje_limpio = limpiar_texto_whatsapp(mensaje)
+    lineas = mensaje_limpio.split("\n")
+    encabezado = lineas[0] if lineas else "BradaFin"
+    asunto = lineas[1] if len(lineas) > 1 else safe(titulo)
+    cuerpo = safe("\n".join(lineas[2:]).strip()).replace("\n", "<br>")
     tel = normalizar_whatsapp_destino(telefono)
+
     st.markdown(
         f"""
         <div class='whatsapp-preview'>
-            <div class='whatsapp-preview-title'>📲 {safe(titulo)}</div>
-            <div class='whatsapp-preview-sub'>Destino: {safe(tel or 'sin número')} · {safe(detalle or estado_txt)}</div>
-            <div class='whatsapp-bubble'>{cuerpo}</div>
+            <div class='whatsapp-preview-top'>
+                <div>
+                    <div class='whatsapp-preview-title'>WhatsApp BradaFin</div>
+                    <div class='whatsapp-preview-sub'>Destino: {safe(tel or 'sin número')} · {safe(detalle or estado_txt)}</div>
+                </div>
+                <div class='whatsapp-preview-chip'>{safe(estado_txt)}</div>
+            </div>
+            <div class='whatsapp-bubble'>
+                <div class='wa-brand'>{safe(encabezado)}</div>
+                <div class='wa-subject'>{safe(asunto)}</div>
+                <div class='wa-line'></div>
+                <div class='wa-body'>{cuerpo}</div>
+            </div>
             <div class='whatsapp-status {status_class}'>{safe(estado_txt)}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    link = whatsapp_link(telefono, mensaje)
+    link = whatsapp_link(telefono, mensaje_limpio)
     if link and estado != "enviado":
         st.markdown(f"[Abrir en WhatsApp]({link})", unsafe_allow_html=True)
 
