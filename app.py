@@ -645,6 +645,257 @@ def aplicar_estilo_bradafin():
             stroke: #102019 !important;
         }
 
+
+
+        /* =================================================== */
+        /* MEJORA VISUAL FINAL: BOTONES PREMIUM + HAMBURGUESA */
+        /* Solo CSS: no cambia funciones, datos, Supabase ni flujo */
+        /* =================================================== */
+
+        /* Botones generales mas premium */
+        .stButton > button,
+        .stDownloadButton > button,
+        button[data-testid="baseButton-secondary"] {
+            min-height: 52px !important;
+            border-radius: 999px !important;
+            padding: .7rem 1.05rem !important;
+            font-weight: 950 !important;
+            letter-spacing: -.015em !important;
+            color: #102019 !important;
+            border: 1px solid rgba(212,160,23,.42) !important;
+            background:
+                linear-gradient(180deg, rgba(255,255,255,.98) 0%, rgba(255,250,232,.94) 100%) padding-box,
+                linear-gradient(135deg, rgba(31,107,79,.55), rgba(212,160,23,.80)) border-box !important;
+            box-shadow:
+                0 14px 28px rgba(16,32,25,.08),
+                inset 0 1px 0 rgba(255,255,255,.78) !important;
+            transition: transform .16s ease, box-shadow .16s ease, filter .16s ease !important;
+        }
+
+        .stButton > button:hover,
+        .stDownloadButton > button:hover,
+        button[data-testid="baseButton-secondary"]:hover {
+            transform: translateY(-2px) !important;
+            color: #102019 !important;
+            border-color: rgba(212,160,23,.72) !important;
+            background:
+                radial-gradient(circle at 18% 10%, rgba(242,209,107,.32), transparent 34%),
+                linear-gradient(135deg, #FFFFFF 0%, #FFF6D8 45%, #F2FFF6 100%) !important;
+            box-shadow:
+                0 22px 40px rgba(31,107,79,.16),
+                inset 0 1px 0 rgba(255,255,255,.88) !important;
+        }
+
+        .stButton > button:active,
+        .stDownloadButton > button:active {
+            transform: translateY(0) scale(.99) !important;
+        }
+
+        /* Botones principales: verde profundo + dorado */
+        .stButton > button[kind="primary"],
+        .stDownloadButton > button[kind="primary"],
+        button[data-testid="baseButton-primary"] {
+            color: #FFFFFF !important;
+            border: 1px solid rgba(255,255,255,.16) !important;
+            background:
+                radial-gradient(circle at 18% 12%, rgba(255,255,255,.22), transparent 30%),
+                linear-gradient(135deg, #0B1612 0%, #14513D 38%, #1F6B4F 68%, #D4A017 100%) !important;
+            box-shadow:
+                0 20px 42px rgba(31,107,79,.26),
+                inset 0 1px 0 rgba(255,255,255,.20) !important;
+        }
+
+        .stButton > button[kind="primary"] *,
+        .stDownloadButton > button[kind="primary"] *,
+        button[data-testid="baseButton-primary"] * {
+            color: #FFFFFF !important;
+        }
+
+        .stButton > button[kind="primary"]:hover,
+        .stDownloadButton > button[kind="primary"]:hover,
+        button[data-testid="baseButton-primary"]:hover {
+            filter: brightness(1.06) saturate(1.08) !important;
+            box-shadow:
+                0 26px 48px rgba(31,107,79,.31),
+                0 0 0 3px rgba(212,160,23,.10),
+                inset 0 1px 0 rgba(255,255,255,.25) !important;
+        }
+
+        /* Sidebar: botones tipo tarjeta premium */
+        section[data-testid="stSidebar"] .stButton > button {
+            min-height: 50px !important;
+            border-radius: 20px !important;
+            justify-content: center !important;
+            color: #173B2D !important;
+            background:
+                linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,252,242,.92)) padding-box,
+                linear-gradient(135deg, rgba(31,107,79,.24), rgba(212,160,23,.36)) border-box !important;
+            border: 1px solid transparent !important;
+            box-shadow:
+                0 10px 22px rgba(16,32,25,.055),
+                inset 0 1px 0 rgba(255,255,255,.75) !important;
+        }
+
+        section[data-testid="stSidebar"] .stButton > button:hover {
+            color: #102019 !important;
+            background:
+                radial-gradient(circle at 15% 10%, rgba(242,209,107,.30), transparent 34%),
+                linear-gradient(135deg, #FFFFFF 0%, #FFF8DD 52%, #EEF9F1 100%) !important;
+            transform: translateX(2px) !important;
+            box-shadow: 0 16px 28px rgba(31,107,79,.12) !important;
+        }
+
+        section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+            color: #FFFFFF !important;
+            background:
+                radial-gradient(circle at 18% 14%, rgba(255,255,255,.22), transparent 28%),
+                linear-gradient(135deg, #0B1612 0%, #14513D 42%, #1F6B4F 72%, #D4A017 100%) !important;
+            border: 1px solid rgba(255,255,255,.14) !important;
+            box-shadow:
+                0 18px 34px rgba(31,107,79,.24),
+                inset 0 1px 0 rgba(255,255,255,.18) !important;
+        }
+
+        section[data-testid="stSidebar"] .stButton > button[kind="primary"] *,
+        section[data-testid="stSidebar"] .stButton > button[kind="primary"] p,
+        section[data-testid="stSidebar"] .stButton > button[kind="primary"] span {
+            color: #FFFFFF !important;
+        }
+
+        /* Radio buttons como chips premium, sin cambiar comportamiento */
+        div[data-testid="stRadio"] div[role="radiogroup"] {
+            gap: .7rem 1rem !important;
+            flex-wrap: wrap !important;
+            align-items: center !important;
+        }
+
+        div[data-testid="stRadio"] label {
+            min-height: 42px !important;
+            padding: .48rem .82rem !important;
+            border-radius: 999px !important;
+            background:
+                linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,251,238,.92)) padding-box,
+                linear-gradient(135deg, rgba(31,107,79,.25), rgba(212,160,23,.38)) border-box !important;
+            border: 1px solid transparent !important;
+            box-shadow: 0 10px 20px rgba(16,32,25,.055) !important;
+            transition: all .16s ease !important;
+        }
+
+        div[data-testid="stRadio"] label:hover {
+            transform: translateY(-1px) !important;
+            box-shadow: 0 16px 26px rgba(31,107,79,.12) !important;
+            background:
+                radial-gradient(circle at 20% 15%, rgba(242,209,107,.28), transparent 34%),
+                linear-gradient(135deg, #FFFFFF 0%, #FFF7D9 50%, #F2FFF6 100%) !important;
+        }
+
+        div[data-testid="stRadio"] label:has(input:checked) {
+            background:
+                radial-gradient(circle at 18% 12%, rgba(255,255,255,.18), transparent 30%),
+                linear-gradient(135deg, #102019 0%, #14513D 50%, #D4A017 100%) !important;
+            border-color: rgba(255,255,255,.18) !important;
+            box-shadow: 0 18px 30px rgba(31,107,79,.22) !important;
+        }
+
+        div[data-testid="stRadio"] label:has(input:checked) p,
+        div[data-testid="stRadio"] label:has(input:checked) span,
+        div[data-testid="stRadio"] label:has(input:checked) div {
+            color: #FFFFFF !important;
+        }
+
+        /* Checkbox visual premium */
+        div[data-testid="stCheckbox"] label {
+            width: fit-content !important;
+            padding: .55rem .85rem !important;
+            border-radius: 18px !important;
+            background:
+                linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,251,238,.92)) padding-box,
+                linear-gradient(135deg, rgba(31,107,79,.25), rgba(212,160,23,.38)) border-box !important;
+            border: 1px solid transparent !important;
+            box-shadow: 0 10px 20px rgba(16,32,25,.055) !important;
+        }
+
+        div[data-testid="stCheckbox"] label:has(input:checked) {
+            background:
+                linear-gradient(135deg, rgba(31,107,79,.10), rgba(212,160,23,.18)) padding-box,
+                linear-gradient(135deg, #1F6B4F, #D4A017) border-box !important;
+            box-shadow: 0 14px 24px rgba(31,107,79,.12) !important;
+        }
+
+        /* Boton hamburguesa tipo medallon premium a la izquierda */
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"],
+        div[data-testid="collapsedControl"],
+        button[aria-label="Open sidebar"],
+        button[title="Open sidebar"] {
+            width: 56px !important;
+            height: 56px !important;
+            min-width: 56px !important;
+            min-height: 56px !important;
+            border-radius: 999px !important;
+            position: fixed !important;
+            top: 1rem !important;
+            left: 1rem !important;
+            z-index: 999999 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            background:
+                radial-gradient(circle at 30% 24%, #F4E2C7 0%, #C6A27C 42%, #9B7554 72%, #6F513D 100%) !important;
+            border: 1px solid rgba(255,255,255,.38) !important;
+            box-shadow:
+                0 18px 36px rgba(111,81,61,.33),
+                0 0 0 7px rgba(212,160,23,.08),
+                inset 0 1px 0 rgba(255,255,255,.35) !important;
+            overflow: hidden !important;
+        }
+
+        [data-testid="collapsedControl"]::before,
+        [data-testid="stSidebarCollapsedControl"]::before,
+        div[data-testid="collapsedControl"]::before,
+        button[aria-label="Open sidebar"]::before,
+        button[title="Open sidebar"]::before {
+            content: "☰" !important;
+            pointer-events: none !important;
+            color: #FFFFFF !important;
+            font-size: 1.55rem !important;
+            font-weight: 950 !important;
+            line-height: 1 !important;
+            text-shadow: 0 2px 8px rgba(0,0,0,.25) !important;
+        }
+
+        [data-testid="collapsedControl"] svg,
+        [data-testid="stSidebarCollapsedControl"] svg,
+        button[aria-label="Open sidebar"] svg,
+        button[title="Open sidebar"] svg {
+            opacity: 0 !important;
+            width: 0 !important;
+            height: 0 !important;
+            margin: 0 !important;
+        }
+
+        [data-testid="collapsedControl"]:hover,
+        [data-testid="stSidebarCollapsedControl"]:hover,
+        button[aria-label="Open sidebar"]:hover,
+        button[title="Open sidebar"]:hover {
+            transform: translateY(-1px) scale(1.02) !important;
+            filter: brightness(1.06) saturate(1.05) !important;
+            box-shadow:
+                0 24px 46px rgba(111,81,61,.38),
+                0 0 0 9px rgba(212,160,23,.11),
+                inset 0 1px 0 rgba(255,255,255,.42) !important;
+        }
+
+        /* Boton de cerrar panel: elegante, sin afectar la accion nativa */
+        section[data-testid="stSidebar"] button[aria-label="Close sidebar"],
+        section[data-testid="stSidebar"] button[title="Close sidebar"],
+        section[data-testid="stSidebar"] button[kind="header"] {
+            border-radius: 999px !important;
+            background: rgba(255,255,255,.86) !important;
+            border: 1px solid rgba(31,107,79,.12) !important;
+            box-shadow: 0 10px 18px rgba(16,32,25,.08) !important;
+        }
+
         #MainMenu, footer { visibility:hidden; }
 
         @media (max-width: 900px) {
