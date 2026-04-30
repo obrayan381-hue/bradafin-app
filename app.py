@@ -3,7 +3,11 @@ import re
 import io
 import html
 import uuid
+import json
+import base64
 import urllib.parse
+import urllib.request
+import urllib.error
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
@@ -137,6 +141,24 @@ if GEMINI_API_KEY:
         )
     except Exception:
         openai_client = None
+
+# ============================================================
+# WHATSAPP AUTOMÁTICO
+# ============================================================
+# BradaFin puede enviar WhatsApp automático si configuras Twilio o Meta Cloud API.
+# Si no hay credenciales, la app muestra el mensaje premium listo para abrir en WhatsApp.
+BRADAFIN_AUTO_WHATSAPP = str(leer_config("BRADAFIN_AUTO_WHATSAPP", "false")).strip().lower() in ["1", "true", "yes", "si", "sí", "on"]
+WHATSAPP_PROVIDER = str(leer_config("WHATSAPP_PROVIDER", "manual")).strip().lower()
+WHATSAPP_COUNTRY_CODE = str(leer_config("WHATSAPP_COUNTRY_CODE", "57")).strip()
+
+# Twilio WhatsApp
+TWILIO_ACCOUNT_SID = leer_config("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = leer_config("TWILIO_AUTH_TOKEN", "")
+TWILIO_WHATSAPP_FROM = leer_config("TWILIO_WHATSAPP_FROM", "")
+
+# Meta WhatsApp Cloud API
+META_WHATSAPP_TOKEN = leer_config("META_WHATSAPP_TOKEN", "")
+META_WHATSAPP_PHONE_NUMBER_ID = leer_config("META_WHATSAPP_PHONE_NUMBER_ID", "")
 
 # ============================================================
 # ESTILO
@@ -975,6 +997,70 @@ def aplicar_estilo_bradafin():
             fill: #14513D !important;
         }
 
+
+        /* =================================================== */
+        /* WHATSAPP PREMIUM PREVIEW */
+        /* =================================================== */
+        .whatsapp-preview {
+            border-radius: 26px;
+            padding: 1.05rem 1.1rem;
+            margin: .75rem 0 1rem 0;
+            background:
+                radial-gradient(circle at 16% 14%, rgba(242,209,107,.18), transparent 34%),
+                linear-gradient(135deg, #102019 0%, #14513D 55%, #1F6B4F 78%, #D4A017 100%);
+            border: 1px solid rgba(255,255,255,.18);
+            box-shadow: 0 22px 44px rgba(16,32,25,.22);
+        }
+        .whatsapp-preview,
+        .whatsapp-preview * {
+            color: #FFFFFF !important;
+        }
+        .whatsapp-preview-title {
+            font-size: 1.02rem;
+            font-weight: 950;
+            letter-spacing: -.02em;
+            display:flex;
+            align-items:center;
+            gap:.45rem;
+            margin-bottom:.35rem;
+        }
+        .whatsapp-preview-sub {
+            color: rgba(255,255,255,.78) !important;
+            font-size:.86rem;
+            line-height:1.45;
+            margin-bottom:.8rem;
+        }
+        .whatsapp-bubble {
+            background: rgba(255,255,255,.94);
+            color: #102019 !important;
+            border-radius: 20px 20px 20px 6px;
+            padding: .85rem .95rem;
+            border: 1px solid rgba(212,160,23,.28);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.70);
+            white-space: normal;
+            line-height: 1.45;
+            font-size: .93rem;
+        }
+        .whatsapp-bubble * {
+            color: #102019 !important;
+        }
+        .whatsapp-status {
+            display:inline-flex;
+            align-items:center;
+            gap:.38rem;
+            border-radius:999px;
+            padding:.38rem .7rem;
+            font-size:.78rem;
+            font-weight:950;
+            margin-top:.78rem;
+            background:rgba(255,255,255,.14);
+            border:1px solid rgba(255,255,255,.20);
+            color:#FFFFFF !important;
+        }
+        .whatsapp-status.ok { background: rgba(34,197,94,.20); border-color: rgba(187,247,208,.35); }
+        .whatsapp-status.warn { background: rgba(245,158,11,.22); border-color: rgba(253,230,138,.38); }
+        .whatsapp-status.err { background: rgba(239,68,68,.20); border-color: rgba(254,202,202,.36); }
+
         #MainMenu, footer { visibility:hidden; }
 
         @media (max-width: 900px) {
@@ -1673,8 +1759,20 @@ def limpiar_telefono(tel):
     return re.sub(r"\D+", "", str(tel or ""))
 
 
+def normalizar_whatsapp_destino(tel):
+    """Normaliza número para API/wa.me. Si recibe 10 dígitos colombianos, agrega 57."""
+    numero = limpiar_telefono(tel)
+    if not numero:
+        return ""
+    if numero.startswith("00"):
+        numero = numero[2:]
+    if WHATSAPP_COUNTRY_CODE and len(numero) == 10 and not numero.startswith(WHATSAPP_COUNTRY_CODE):
+        numero = f"{WHATSAPP_COUNTRY_CODE}{numero}"
+    return numero
+
+
 def whatsapp_link(telefono, mensaje):
-    tel = limpiar_telefono(telefono)
+    tel = normalizar_whatsapp_destino(telefono)
     if not tel:
         return ""
     return f"https://wa.me/{tel}?text={urllib.parse.quote(mensaje)}"
@@ -1686,14 +1784,298 @@ def mailto_link(email, subject, body):
     return f"mailto:{urllib.parse.quote(email)}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
 
 
+def whatsapp_api_disponible():
+    if not BRADAFIN_AUTO_WHATSAPP:
+        return False
+    if WHATSAPP_PROVIDER == "twilio":
+        return bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM)
+    if WHATSAPP_PROVIDER in ["meta", "cloud", "meta_cloud"]:
+        return bool(META_WHATSAPP_TOKEN and META_WHATSAPP_PHONE_NUMBER_ID)
+    return False
+
+
+def whatsapp_estado_config():
+    if not BRADAFIN_AUTO_WHATSAPP:
+        return "manual", "WhatsApp automático está apagado. Se mostrarán mensajes premium listos para abrir en WhatsApp."
+    if WHATSAPP_PROVIDER == "twilio":
+        if whatsapp_api_disponible():
+            return "ok", "WhatsApp automático activo con Twilio."
+        return "warn", "Faltan credenciales de Twilio para envío automático."
+    if WHATSAPP_PROVIDER in ["meta", "cloud", "meta_cloud"]:
+        if whatsapp_api_disponible():
+            return "ok", "WhatsApp automático activo con Meta Cloud API."
+        return "warn", "Faltan credenciales de Meta WhatsApp Cloud API."
+    return "warn", "Proveedor de WhatsApp no reconocido. Usa 'twilio' o 'meta'."
+
+
+def enviar_whatsapp_automatico(telefono, mensaje):
+    """Envía WhatsApp real con Twilio o Meta Cloud API. Si no está configurado, no rompe la app."""
+    destino = normalizar_whatsapp_destino(telefono)
+    if not destino:
+        return False, "No hay número de WhatsApp válido."
+
+    if not whatsapp_api_disponible():
+        return False, "WhatsApp automático no está configurado. El mensaje queda listo para envío manual."
+
+    try:
+        if WHATSAPP_PROVIDER == "twilio":
+            url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
+            from_number = TWILIO_WHATSAPP_FROM if str(TWILIO_WHATSAPP_FROM).startswith("whatsapp:") else f"whatsapp:{TWILIO_WHATSAPP_FROM}"
+            to_number = f"whatsapp:+{destino}"
+            data = urllib.parse.urlencode({
+                "From": from_number,
+                "To": to_number,
+                "Body": mensaje,
+            }).encode("utf-8")
+            auth = base64.b64encode(f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}".encode("utf-8")).decode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={
+                    "Authorization": f"Basic {auth}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=18) as resp:
+                body = resp.read().decode("utf-8", errors="ignore")
+            return True, "WhatsApp enviado automáticamente por Twilio."
+
+        if WHATSAPP_PROVIDER in ["meta", "cloud", "meta_cloud"]:
+            url = f"https://graph.facebook.com/v19.0/{META_WHATSAPP_PHONE_NUMBER_ID}/messages"
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": destino,
+                "type": "text",
+                "text": {
+                    "preview_url": False,
+                    "body": mensaje,
+                },
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {META_WHATSAPP_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=18) as resp:
+                body = resp.read().decode("utf-8", errors="ignore")
+            return True, "WhatsApp enviado automáticamente por Meta Cloud API."
+
+        return False, "Proveedor de WhatsApp no reconocido."
+    except urllib.error.HTTPError as e:
+        try:
+            detalle = e.read().decode("utf-8", errors="ignore")
+        except Exception:
+            detalle = str(e)
+        return False, f"WhatsApp API respondió error {e.code}: {detalle[:280]}"
+    except Exception as e:
+        return False, f"No pude enviar WhatsApp automático: {e}"
+
+
+def whatsapp_bold(txt):
+    txt = str(txt or "").replace("*", "")
+    return f"*{txt}*"
+
+
 def mensaje_cobro(negocio, cuenta):
     nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
+    venc = "sin fecha"
+    try:
+        if cuenta.get("fecha_vencimiento") is not None and pd.notna(cuenta.get("fecha_vencimiento")):
+            venc = str(pd.to_datetime(cuenta.get("fecha_vencimiento")).date())
+    except Exception:
+        pass
     return (
-        f"Hola {cuenta.get('tercero_nombre','')}. Te recordamos el saldo pendiente con {nombre_negocio}: "
-        f"{money(cuenta.get('saldo_pendiente',0))} por {cuenta.get('concepto','cuenta pendiente')}. "
-        f"Vencimiento: {pd.to_datetime(cuenta.get('fecha_vencimiento')).date() if cuenta.get('fecha_vencimiento') is not None else 'sin fecha'}. "
-        "Puedes abonar o pagar completo. Gracias."
+        f"🟢 *{nombre_negocio}*\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        f"Hola {cuenta.get('tercero_nombre','')}, te recordamos un saldo pendiente.\\n\\n"
+        f"💰 *Saldo:* {money(cuenta.get('saldo_pendiente',0))}\\n"
+        f"🧾 *Concepto:* {cuenta.get('concepto','cuenta pendiente')}\\n"
+        f"📅 *Vencimiento:* {venc}\\n\\n"
+        "Puedes abonar o pagar completo. Gracias por mantener tu cuenta al día.\\n"
+        "━━━━━━━━━━━━━━\\n"
+        "_Mensaje enviado desde BradaFin._"
     )
+
+
+def mensaje_cuenta_creada_cliente(negocio, cuenta):
+    nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
+    venc = "sin fecha"
+    try:
+        venc = str(pd.to_datetime(cuenta.get("fecha_vencimiento")).date()) if cuenta.get("fecha_vencimiento") else "sin fecha"
+    except Exception:
+        pass
+    return (
+        f"🟢 *{nombre_negocio}*\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        f"Hola {cuenta.get('tercero_nombre','')}, se registró una cuenta por cobrar.\\n\\n"
+        f"🧾 *Concepto:* {cuenta.get('concepto','Cuenta pendiente')}\\n"
+        f"💰 *Valor:* {money(cuenta.get('monto_total',0))}\\n"
+        f"📅 *Vencimiento:* {venc}\\n\\n"
+        "Puedes realizar un abono o pago completo cuando lo tengas disponible.\\n"
+        "━━━━━━━━━━━━━━\\n"
+        "_Mensaje enviado desde BradaFin._"
+    )
+
+
+def mensaje_abono_cliente(negocio, cuenta, monto_abono, nuevo_saldo=0):
+    nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
+    return (
+        f"✅ *Abono registrado · {nombre_negocio}*\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        f"Hola {cuenta.get('tercero_nombre','')}, recibimos tu abono.\\n\\n"
+        f"💵 *Abono:* {money(monto_abono)}\\n"
+        f"📌 *Saldo pendiente:* {money(nuevo_saldo)}\\n"
+        f"🧾 *Concepto:* {cuenta.get('concepto','Cuenta pendiente')}\\n\\n"
+        "Gracias por tu pago.\\n"
+        "━━━━━━━━━━━━━━\\n"
+        "_Controlado con BradaFin._"
+    )
+
+
+def mensaje_movimiento_comerciante(negocio, tipo, categoria, monto, fecha_mov, metodo, descripcion="", producto="", cantidad=0):
+    nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
+    icono = "🟢" if tipo in ["Venta", "Entrada de caja", "Cobro recibido"] else "🔴" if tipo in ["Gasto operativo", "Salida de caja", "Pago proveedor"] else "🟡"
+    extra = ""
+    if producto:
+        extra += f"\\n📦 *Producto:* {producto}"
+    try:
+        if float(cantidad or 0) > 0:
+            extra += f"\\n🔢 *Cantidad:* {cantidad:g}"
+    except Exception:
+        pass
+    return (
+        f"{icono} *BradaFin · Movimiento registrado*\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        f"🏪 *Negocio:* {nombre_negocio}\\n"
+        f"📌 *Tipo:* {tipo}\\n"
+        f"🏷️ *Categoría:* {categoria}\\n"
+        f"💰 *Monto:* {money(monto)}\\n"
+        f"💳 *Método:* {metodo}\\n"
+        f"📅 *Fecha:* {fecha_mov.isoformat() if hasattr(fecha_mov, 'isoformat') else fecha_mov}"
+        f"{extra}\\n"
+        f"📝 *Detalle:* {descripcion or 'Sin descripción'}\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        "_Tu negocio quedó actualizado._"
+    )
+
+
+def mensaje_caja_comerciante(negocio, fecha_caja, inicial, contado, esperado, estado):
+    nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
+    diferencia = float(contado or 0) - float(esperado or 0)
+    return (
+        f"💵 *BradaFin · Caja {estado}*\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        f"🏪 *Negocio:* {nombre_negocio}\\n"
+        f"📅 *Fecha:* {fecha_caja.isoformat() if hasattr(fecha_caja, 'isoformat') else fecha_caja}\\n"
+        f"🚪 *Apertura:* {money(inicial)}\\n"
+        f"🧮 *Saldo esperado:* {money(esperado)}\\n"
+        f"🤲 *Saldo contado:* {money(contado)}\\n"
+        f"📊 *Diferencia:* {money(diferencia)}\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        "_Control de caja actualizado._"
+    )
+
+
+def mensaje_cuenta_comerciante(negocio, cuenta, accion="Cuenta creada"):
+    nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
+    return (
+        f"📌 *BradaFin · {accion}*\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        f"🏪 *Negocio:* {nombre_negocio}\\n"
+        f"👤 *Tercero:* {cuenta.get('tercero_nombre','')}\\n"
+        f"📄 *Tipo:* {cuenta.get('tipo','')}\\n"
+        f"🧾 *Concepto:* {cuenta.get('concepto','')}\\n"
+        f"💰 *Valor:* {money(cuenta.get('monto_total', cuenta.get('saldo_pendiente', 0)))}\\n"
+        f"📌 *Saldo:* {money(cuenta.get('saldo_pendiente', 0))}\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        "_Cartera actualizada en BradaFin._"
+    )
+
+
+def mensaje_resumen_alertas(negocio, alertas, metricas):
+    nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
+    lineas = []
+    for _, txt in (alertas or [])[:5]:
+        lineas.append(f"• {txt}")
+    return (
+        f"🔔 *BradaFin · Resumen de alertas*\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        f"🏪 *Negocio:* {nombre_negocio}\\n"
+        f"💰 *Ventas mes:* {money(metricas.get('ventas',0))}\\n"
+        f"📊 *Utilidad estimada:* {money(metricas.get('utilidad_estimada',0))}\\n"
+        f"📌 *Cartera:* {money(metricas.get('cxc',0))}\\n"
+        f"📦 *Stock bajo:* {metricas.get('stock_bajo',0)}\\n\\n"
+        f"*Señales de hoy:*\\n" + "\\n".join(lineas) + "\\n"
+        f"━━━━━━━━━━━━━━\\n"
+        "_Revise BradaFin para tomar acción._"
+    )
+
+
+def render_whatsapp_preview(titulo, mensaje, telefono="", estado="listo", detalle=""):
+    status_class = "ok" if estado == "enviado" else "err" if estado == "error" else "warn"
+    estado_txt = "Enviado automáticamente" if estado == "enviado" else "No enviado automáticamente" if estado == "error" else "Listo para enviar"
+    cuerpo = safe(mensaje).replace("\\n", "<br>")
+    tel = normalizar_whatsapp_destino(telefono)
+    st.markdown(
+        f"""
+        <div class='whatsapp-preview'>
+            <div class='whatsapp-preview-title'>📲 {safe(titulo)}</div>
+            <div class='whatsapp-preview-sub'>Destino: {safe(tel or 'sin número')} · {safe(detalle or estado_txt)}</div>
+            <div class='whatsapp-bubble'>{cuerpo}</div>
+            <div class='whatsapp-status {status_class}'>{safe(estado_txt)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    link = whatsapp_link(telefono, mensaje)
+    if link and estado != "enviado":
+        st.markdown(f"[Abrir en WhatsApp]({link})", unsafe_allow_html=True)
+
+
+def cola_whatsapp_push(titulo, mensaje, telefono="", estado="listo", detalle=""):
+    cola = st.session_state.get("bradafin_whatsapp_flash_queue", [])
+    cola.append({
+        "titulo": titulo,
+        "mensaje": mensaje,
+        "telefono": telefono,
+        "estado": estado,
+        "detalle": detalle,
+    })
+    st.session_state["bradafin_whatsapp_flash_queue"] = cola[-4:]
+
+
+def procesar_notificacion_whatsapp(titulo, telefono, mensaje, forzar_manual=False):
+    """Envía si API está activa; si no, deja vista premium y enlace manual."""
+    if forzar_manual or not whatsapp_api_disponible():
+        _, detalle = whatsapp_estado_config()
+        cola_whatsapp_push(titulo, mensaje, telefono, "listo", detalle)
+        return False, detalle
+    ok, detalle = enviar_whatsapp_automatico(telefono, mensaje)
+    cola_whatsapp_push(titulo, mensaje, telefono, "enviado" if ok else "error", detalle)
+    return ok, detalle
+
+
+def mostrar_whatsapp_flash():
+    cola = st.session_state.pop("bradafin_whatsapp_flash_queue", [])
+    if not cola:
+        return
+    st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+    section_header("Notificaciones WhatsApp", "Mensajes generados por la última acción.")
+    for item in cola:
+        render_whatsapp_preview(
+            item.get("titulo", "WhatsApp"),
+            item.get("mensaje", ""),
+            item.get("telefono", ""),
+            item.get("estado", "listo"),
+            item.get("detalle", ""),
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 def exportar_excel(df, filename="bradafin_export.xlsx", negocio=None, periodo=None, fecha_base=None, metricas=None, df_cuentas=None, df_productos=None):
@@ -2844,6 +3226,9 @@ def render_caja(negocio, user_id, df_movs, df_cajas):
             else:
                 payload["creado_en"] = datetime.now().isoformat()
                 ok,res = insert_safe("bradafin_cajas_diarias", payload)
+            if ok and bool(negocio.get("whatsapp_alertas", True)):
+                msg = mensaje_caja_comerciante(negocio, fecha_caja, inicial, contado, inicial + entradas - salidas, estado)
+                procesar_notificacion_whatsapp("Caja actualizada", negocio.get("telefono", ""), msg)
             st.success("Caja guardada.") if ok else st.error(f"No pude guardar caja: {res}")
             if ok: st.rerun()
 
@@ -2906,6 +3291,16 @@ def render_ventas_gastos(negocio, user_id, df_productos, df_movs):
                 delta = -cantidad if tipo == "Venta" else cantidad if tipo == "Compra inventario" else 0
                 if delta:
                     actualizar_stock_producto(producto_id, delta)
+            if ok:
+                producto_nombre = ""
+                try:
+                    if producto_id and not df_productos.empty:
+                        producto_nombre = df_productos[df_productos["id"].astype(str) == str(producto_id)].iloc[0].get("nombre", "")
+                except Exception:
+                    producto_nombre = ""
+                if bool(negocio.get("whatsapp_alertas", True)):
+                    msg = mensaje_movimiento_comerciante(negocio, tipo, categoria, monto, fecha_mov, metodo, descripcion, producto_nombre, cantidad)
+                    procesar_notificacion_whatsapp("Movimiento registrado", negocio.get("telefono", ""), msg)
             st.success("Movimiento guardado.") if ok else st.error(f"No pude guardar: {res}")
             if ok: st.rerun()
 
@@ -3175,6 +3570,21 @@ def render_cuentas(negocio, user_id, df_clientes, df_proveedores, df_cuentas, df
                 st.error("Escribe tercero y valor mayor a cero.")
             else:
                 ok,res = crear_cuenta(negocio_id, user_id, tipo, tercero_id or None, "cliente" if tipo == "Por cobrar" else "proveedor", tercero_nombre, documento, telefono, concepto, monto, fecha_cuenta, fecha_venc, obs)
+                if ok:
+                    cuenta_notif = {
+                        "tipo": tipo,
+                        "tercero_nombre": tercero_nombre,
+                        "documento": documento,
+                        "telefono": telefono,
+                        "concepto": concepto,
+                        "monto_total": monto,
+                        "saldo_pendiente": monto,
+                        "fecha_vencimiento": fecha_venc,
+                    }
+                    if bool(negocio.get("whatsapp_alertas", True)):
+                        procesar_notificacion_whatsapp("Cuenta creada para comerciante", negocio.get("telefono", ""), mensaje_cuenta_comerciante(negocio, cuenta_notif, "Cuenta creada"))
+                    if tipo == "Por cobrar":
+                        procesar_notificacion_whatsapp("Cuenta por cobrar para cliente", telefono, mensaje_cuenta_creada_cliente(negocio, cuenta_notif))
                 st.success("Cuenta creada.") if ok else st.error(f"No pude crear cuenta: {res}")
                 if ok: st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
@@ -3200,7 +3610,17 @@ def render_cuentas(negocio, user_id, df_clientes, df_proveedores, df_cuentas, df
                 nota = st.text_input("Nota")
                 submit_abono = st.form_submit_button("Registrar abono / pago", type="primary", use_container_width=True)
             if submit_abono:
+                saldo_anterior = float(cuenta.get("saldo_pendiente", 0) or 0)
+                monto_real = min(float(monto_abono or 0), saldo_anterior)
                 ok,res = registrar_abono(negocio_id, user_id, cuenta, monto_abono, fecha_abono, metodo, nota)
+                if ok:
+                    nuevo_saldo = max(saldo_anterior - monto_real, 0)
+                    cuenta_notif = dict(cuenta)
+                    cuenta_notif["saldo_pendiente"] = nuevo_saldo
+                    if bool(negocio.get("whatsapp_alertas", True)):
+                        procesar_notificacion_whatsapp("Abono registrado para comerciante", negocio.get("telefono", ""), mensaje_cuenta_comerciante(negocio, cuenta_notif, f"Abono registrado por {money(monto_real)}"))
+                    if cuenta.get("tipo") == "Por cobrar":
+                        procesar_notificacion_whatsapp("Recibo de abono para cliente", cuenta.get("telefono", ""), mensaje_abono_cliente(negocio, cuenta, monto_real, nuevo_saldo))
                 st.success("Abono registrado.") if ok else st.error(f"No pude registrar abono: {res}")
                 if ok: st.rerun()
             if cuenta.get("tipo") == "Por cobrar":
@@ -3454,27 +3874,52 @@ def render_reportes(negocio, user_id, df_movs, df_cuentas, df_productos):
 
 
 def render_alertas(negocio, user_id, df_movs, df_cuentas, df_productos):
-    st.markdown("<div class='hero-card'><div class='hero-badge'>Alertas</div><div class='hero-title'>WhatsApp manual, correo y señales internas.</div><div class='hero-sub'>En el MVP se generan mensajes listos para enviar. La automatización por API queda preparada para fase 2.</div></div>", unsafe_allow_html=True)
+    st.markdown("<div class='hero-card'><div class='hero-badge'>Alertas + WhatsApp</div><div class='hero-title'>Notificaciones automáticas y mensajes premium.</div><div class='hero-sub'>BradaFin puede enviar WhatsApp real con Twilio o Meta Cloud API. Si no hay API configurada, deja el mensaje listo para abrir en WhatsApp.</div></div>", unsafe_allow_html=True)
     alertas = generar_alertas_negocio(negocio, df_movs, df_cuentas, df_productos)
+    metricas = calcular_metricas(df_movs, df_cuentas, df_productos, date.today(), "Mensual")
+
+    st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+    section_header("Estado de WhatsApp automático", "Configuración actual de envío.")
+    estado, detalle = whatsapp_estado_config()
+    pill = "green" if estado == "ok" else "gold" if estado in ["warn", "manual"] else "red"
+    st.markdown(f"<span class='pill pill-{pill}'>● {safe(detalle)}</span>", unsafe_allow_html=True)
+    st.caption("Para envío real necesitas Twilio WhatsApp o Meta WhatsApp Cloud API en Streamlit Secrets. Sin eso, BradaFin conserva el envío manual con mensaje premium.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
     st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
     section_header("Alertas internas", "Qué revisar hoy.")
     for color, txt in alertas:
         st.markdown(f"<span class='pill pill-{color}'>● {safe(txt)}</span><br><br>", unsafe_allow_html=True)
+
+    msg_resumen = mensaje_resumen_alertas(negocio, alertas, metricas)
+    render_whatsapp_preview("Vista previa para comerciante", msg_resumen, negocio.get("telefono", ""), "listo", "Resumen premium del negocio")
+    if st.button("Enviar resumen de alertas al WhatsApp del comerciante", type="primary", use_container_width=True):
+        procesar_notificacion_whatsapp("Resumen de alertas", negocio.get("telefono", ""), msg_resumen)
+        st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
+
     st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
-    section_header("Cobros por WhatsApp", "Cuentas por cobrar pendientes con mensaje listo.")
+    section_header("Cobros por WhatsApp", "Cuentas por cobrar pendientes con mensaje premium.")
     cxc = df_cuentas[(df_cuentas["tipo"] == "Por cobrar") & (df_cuentas["estado"] != "pagada")].copy() if not df_cuentas.empty else pd.DataFrame()
     if cxc.empty:
         st.info("No hay cuentas por cobrar pendientes.")
     else:
         for _, r in cxc.head(12).iterrows():
             cuenta = r.to_dict()
-            link = whatsapp_link(cuenta.get("telefono"), mensaje_cobro(negocio, cuenta))
+            msg = mensaje_cobro(negocio, cuenta)
             st.markdown(f"**{safe(cuenta.get('tercero_nombre'))}** · {money(cuenta.get('saldo_pendiente'))} · vence {pd.to_datetime(cuenta.get('fecha_vencimiento')).date() if pd.notna(cuenta.get('fecha_vencimiento')) else 'sin fecha'}")
-            if link:
-                st.markdown(f"[Enviar WhatsApp]({link})", unsafe_allow_html=True)
-            else:
-                st.caption("Sin teléfono válido.")
+            render_whatsapp_preview("Mensaje de cobro", msg, cuenta.get("telefono", ""), "listo", "Cobro individual")
+            cols = st.columns([1, 1])
+            with cols[0]:
+                if st.button("Enviar automático", key=f"send_cobro_auto_{cuenta.get('id')}", use_container_width=True):
+                    procesar_notificacion_whatsapp("Cobro enviado", cuenta.get("telefono", ""), msg)
+                    st.rerun()
+            with cols[1]:
+                link = whatsapp_link(cuenta.get("telefono"), msg)
+                if link:
+                    st.markdown(f"[Abrir WhatsApp manual]({link})", unsafe_allow_html=True)
+                else:
+                    st.caption("Sin teléfono válido.")
             st.divider()
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -3586,14 +4031,27 @@ def render_perfil(negocio, user_id):
         tipo = st.text_input("Tipo de negocio", value=negocio.get("tipo_negocio", ""))
         ciudad = st.text_input("Ciudad", value=negocio.get("ciudad", ""))
         telefono = st.text_input("WhatsApp", value=negocio.get("telefono", ""))
+        whatsapp_alertas = st.checkbox("Activar notificaciones WhatsApp para movimientos y alertas", value=bool(negocio.get("whatsapp_alertas", True)))
         meta = st.number_input("Meta mensual de ventas", min_value=0.0, step=10000.0, value=float(negocio.get("meta_ventas_mensual", 0) or 0))
         margen = st.slider("Margen objetivo", 0.05, 0.80, float(negocio.get("margen_objetivo", 0.30) or 0.30), 0.01)
         submit = st.form_submit_button("Guardar cambios", type="primary", use_container_width=True)
     if submit:
-        payload = {"nombre": nombre, "tipo_negocio": tipo, "ciudad": ciudad, "telefono": telefono, "meta_ventas_mensual": meta, "margen_objetivo": margen, "actualizado_en": datetime.now().isoformat()}
+        payload = {"nombre": nombre, "tipo_negocio": tipo, "ciudad": ciudad, "telefono": telefono, "whatsapp_alertas": whatsapp_alertas, "meta_ventas_mensual": meta, "margen_objetivo": margen, "actualizado_en": datetime.now().isoformat()}
         ok,res = update_safe("bradafin_negocios", payload, "id", negocio["id"])
         st.success("Perfil actualizado.") if ok else st.error(f"No pude actualizar: {res}")
         if ok: st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+    section_header("WhatsApp automático", "Estado técnico del envío real.")
+    estado_w, detalle_w = whatsapp_estado_config()
+    pill_w = "green" if estado_w == "ok" else "gold"
+    st.markdown(f"<span class='pill pill-{pill_w}'>● {safe(detalle_w)}</span>", unsafe_allow_html=True)
+    st.caption("Secrets recomendados: BRADAFIN_AUTO_WHATSAPP, WHATSAPP_PROVIDER, WHATSAPP_COUNTRY_CODE y credenciales de Twilio o Meta.")
+    msg_prueba = mensaje_resumen_alertas(negocio, [("green", "Prueba de mensaje premium BradaFin.")], calcular_metricas(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), date.today(), "Mensual"))
+    render_whatsapp_preview("Mensaje de prueba", msg_prueba, negocio.get("telefono", ""), "listo", "Así se verá el mensaje en WhatsApp")
+    if st.button("Probar notificación al WhatsApp del negocio", use_container_width=True):
+        procesar_notificacion_whatsapp("Prueba WhatsApp", negocio.get("telefono", ""), msg_prueba)
+        st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
     section_header("Sesión", "Cerrar sesión.")
@@ -3678,6 +4136,7 @@ def main():
         st.divider()
         st.caption("BradaFin · negocios. Zentix queda para personas.")
 
+    mostrar_whatsapp_flash()
     pagina = st.session_state.pagina
     if pagina == "Inicio": render_inicio(negocio, user_id, df_movs, df_cuentas, df_productos)
     elif pagina == "Caja diaria": render_caja(negocio, user_id, df_movs, df_cajas)
