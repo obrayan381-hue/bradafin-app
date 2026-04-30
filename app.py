@@ -550,6 +550,101 @@ def aplicar_estilo_bradafin():
             color: var(--text) !important;
         }
 
+
+
+        /* =================================================== */
+        /* FIX FINAL: HERO CON LETRA CLARA + SIDEBAR HAMBURGUESA */
+        /* =================================================== */
+        .hero-card,
+        .hero-card *,
+        .hero-card div,
+        .hero-card span,
+        .hero-card p,
+        .hero-card .hero-title,
+        .hero-card .hero-sub,
+        .hero-card .hero-badge,
+        .hero-card .hero-mini,
+        .hero-card .hero-mini-label,
+        .hero-card .hero-mini-value {
+            color: #FFFFFF !important;
+            opacity: 1 !important;
+        }
+
+        .hero-card .hero-title {
+            color: #FFFFFF !important;
+            text-shadow: 0 2px 10px rgba(0,0,0,.18) !important;
+        }
+
+        .hero-card .hero-sub {
+            color: rgba(255,255,255,.93) !important;
+            text-shadow: 0 1px 8px rgba(0,0,0,.14) !important;
+        }
+
+        .hero-card .hero-badge {
+            color: #FFFFFF !important;
+            background: rgba(255,255,255,.18) !important;
+            border: 1px solid rgba(255,255,255,.28) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.15) !important;
+        }
+
+        .hero-card .hero-mini {
+            background: rgba(255,255,255,.16) !important;
+            border: 1px solid rgba(255,255,255,.24) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.12) !important;
+        }
+
+        /* Fuerza visible el control nativo para abrir/cerrar el sidebar.
+           Streamlit puede cambiar el testid segun version, por eso cubrimos varias variantes. */
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"],
+        div[data-testid="collapsedControl"],
+        button[aria-label="Open sidebar"],
+        button[title="Open sidebar"] {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            position: fixed !important;
+            top: .85rem !important;
+            left: .85rem !important;
+            z-index: 999999 !important;
+            align-items: center !important;
+            justify-content: center !important;
+            min-width: 44px !important;
+            min-height: 44px !important;
+            border-radius: 16px !important;
+            background: linear-gradient(135deg, #102019 0%, #14513D 45%, #1F6B4F 75%, #D4A017 100%) !important;
+            color: #FFFFFF !important;
+            border: 1px solid rgba(255,255,255,.30) !important;
+            box-shadow: 0 16px 30px rgba(16,32,25,.28) !important;
+        }
+
+        [data-testid="collapsedControl"] button,
+        [data-testid="stSidebarCollapsedControl"] button,
+        [data-testid="collapsedControl"] svg,
+        [data-testid="stSidebarCollapsedControl"] svg,
+        button[aria-label="Open sidebar"] svg,
+        button[title="Open sidebar"] svg {
+            color: #FFFFFF !important;
+            fill: #FFFFFF !important;
+            stroke: #FFFFFF !important;
+            opacity: 1 !important;
+        }
+
+        section[data-testid="stSidebar"] button[kind="header"],
+        section[data-testid="stSidebar"] button[aria-label="Close sidebar"],
+        section[data-testid="stSidebar"] button[title="Close sidebar"] {
+            color: #102019 !important;
+            opacity: 1 !important;
+        }
+
+        section[data-testid="stSidebar"] button[kind="header"] svg,
+        section[data-testid="stSidebar"] button[aria-label="Close sidebar"] svg,
+        section[data-testid="stSidebar"] button[title="Close sidebar"] svg {
+            color: #102019 !important;
+            fill: #102019 !important;
+            stroke: #102019 !important;
+        }
+
         #MainMenu, footer { visibility:hidden; }
 
         @media (max-width: 900px) {
@@ -959,10 +1054,10 @@ def render_auth():
 def render_onboarding(user_id, email):
     st.markdown(
         """
-        <div class='hero-card'>
-            <div class='hero-badge'>Configuración inicial</div>
-            <div class='hero-title'>Registre su negocio.</div>
-            <div class='hero-sub'>BradaFin organiza caja, ventas, cartera, inventario y utilidad desde una base empresarial.</div>
+        <div class='hero-card' style='color:#FFFFFF !important;'>
+            <div class='hero-badge' style='color:#FFFFFF !important;'>Configuración inicial</div>
+            <div class='hero-title' style='color:#FFFFFF !important;'>Registre su negocio.</div>
+            <div class='hero-sub' style='color:rgba(255,255,255,.93) !important;'>BradaFin organiza caja, ventas, cartera, inventario y utilidad desde una base empresarial.</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1928,6 +2023,32 @@ def render_perfil(negocio, user_id):
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
+
+
+def render_sidebar_onboarding(email):
+    """Mantiene contenido en el sidebar durante la configuracion inicial.
+    Sin contenido de sidebar, Streamlit puede ocultar el boton hamburguesa.
+    """
+    with st.sidebar:
+        if LOGO_PATH:
+            st.image(str(LOGO_PATH), width=88)
+        st.markdown("### BradaFin")
+        st.caption(APP_TAGLINE)
+        st.divider()
+        st.markdown("**Configuración inicial**")
+        st.caption("Crea el negocio para activar el panel completo: caja, ventas, clientes, inventario, reportes y alertas.")
+        if email:
+            st.caption(email)
+        st.divider()
+        if st.button("Cerrar sesión", use_container_width=True):
+            try:
+                supabase.auth.sign_out()
+            except Exception:
+                pass
+            st.session_state.user = None
+            st.rerun()
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -1946,6 +2067,7 @@ def main():
         st.stop()
     negocio = obtener_negocio(user_id)
     if not negocio:
+        render_sidebar_onboarding(email)
         render_onboarding(user_id, email)
         st.stop()
     negocio_id = negocio["id"]
