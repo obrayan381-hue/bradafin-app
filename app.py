@@ -1166,6 +1166,115 @@ def delete_safe(tabla, col, val):
     except Exception as e:
         return False, e
 
+
+def date_widget_value(value, default=None):
+    """Convierte valores de Supabase/pandas en date para st.date_input."""
+    default = default or date.today()
+    try:
+        if value is None or value == "":
+            return default
+        ts = pd.to_datetime(value, errors="coerce")
+        if pd.isna(ts):
+            return default
+        return ts.date()
+    except Exception:
+        return default
+
+
+
+def id_limpio(valor):
+    """Normaliza ids que pueden venir como None, NaN o texto vacío."""
+    try:
+        if valor is None:
+            return None
+        if pd.isna(valor):
+            return None
+    except Exception:
+        pass
+    valor = str(valor).strip()
+    if not valor or valor.lower() in ["none", "nan", "nat"]:
+        return None
+    return valor
+
+def movimiento_stock_delta(tipo, cantidad):
+    """Delta real que un movimiento debe causar en inventario."""
+    try:
+        qty = float(cantidad or 0)
+    except Exception:
+        qty = 0.0
+    if tipo == "Venta":
+        return -qty
+    if tipo == "Compra inventario":
+        return qty
+    return 0.0
+
+
+def actualizar_estado_cuenta_por_saldo(cuenta, nuevo_saldo):
+    """Recalcula estado de una cuenta según saldo y vencimiento."""
+    try:
+        nuevo_saldo = float(nuevo_saldo or 0)
+    except Exception:
+        nuevo_saldo = 0.0
+    if nuevo_saldo <= 0:
+        return "pagada"
+    try:
+        fv = pd.to_datetime(cuenta.get("fecha_vencimiento"), errors="coerce")
+        if pd.notna(fv) and fv < pd.Timestamp.today().normalize():
+            return "vencida"
+    except Exception:
+        pass
+    return "abonada" if nuevo_saldo < float(cuenta.get("monto_total", nuevo_saldo) or nuevo_saldo) else "pendiente"
+
+
+def actualizar_movimiento_con_stock(movimiento_actual, nuevo_payload):
+    """Actualiza un movimiento y ajusta inventario reversando el movimiento anterior y aplicando el nuevo."""
+    mov = movimiento_actual or {}
+    mov_id = mov.get("id")
+    if not mov_id:
+        return False, "Movimiento inválido."
+
+    old_producto_id = id_limpio(mov.get("producto_id"))
+    new_producto_id = id_limpio(nuevo_payload.get("producto_id"))
+    old_delta = movimiento_stock_delta(mov.get("tipo"), mov.get("cantidad", 0))
+    new_delta = movimiento_stock_delta(nuevo_payload.get("tipo"), nuevo_payload.get("cantidad", 0))
+
+    ok, res = update_safe("bradafin_movimientos", nuevo_payload, "id", mov_id)
+    if not ok:
+        return ok, res
+
+    # Reversa efecto anterior y aplica efecto nuevo. Si no hay producto, no toca inventario.
+    if old_producto_id and old_delta:
+        actualizar_stock_producto(old_producto_id, -old_delta)
+    if new_producto_id and new_delta:
+        actualizar_stock_producto(new_producto_id, new_delta)
+    clear_cache()
+    return True, res
+
+
+def eliminar_movimiento_con_stock(movimiento_actual):
+    """Elimina movimiento y reversa su efecto en inventario si era venta o compra de inventario."""
+    mov = movimiento_actual or {}
+    mov_id = mov.get("id")
+    if not mov_id:
+        return False, "Movimiento inválido."
+    ok, res = delete_safe("bradafin_movimientos", "id", mov_id)
+    if ok:
+        producto_id = id_limpio(mov.get("producto_id"))
+        delta = movimiento_stock_delta(mov.get("tipo"), mov.get("cantidad", 0))
+        if producto_id and delta:
+            actualizar_stock_producto(producto_id, -delta)
+        clear_cache()
+    return ok, res
+
+
+def eliminar_cuenta_y_abonos(cuenta_id):
+    """Elimina una cuenta junto con sus abonos asociados para evitar bloqueo por relaciones."""
+    try:
+        supabase.table("bradafin_abonos").delete().eq("cuenta_id", cuenta_id).execute()
+    except Exception:
+        pass
+    return delete_safe("bradafin_cuentas", "id", cuenta_id)
+
 # ============================================================
 # SUPABASE DATA
 # ============================================================
@@ -1922,7 +2031,7 @@ def render_caja(negocio, user_id, df_movs, df_cajas):
     col1,col2 = st.columns([.95,1.05], gap="large")
     with col1:
         st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
-        section_header("Apertura / cierre", "Registre el dinero contado.")
+        section_header("Apertura / cierre", "Registre o corrija el dinero contado.")
         with st.form("caja_form"):
             inicial = st.number_input("Saldo inicial", min_value=0.0, step=1000.0, value=float(saldo_inicial))
             contado = st.number_input("Saldo contado al cierre", min_value=0.0, step=1000.0, value=float((caja_row or {}).get("saldo_contado", 0) or 0))
@@ -1938,6 +2047,16 @@ def render_caja(negocio, user_id, df_movs, df_cajas):
                 ok,res = insert_safe("bradafin_cajas_diarias", payload)
             st.success("Caja guardada.") if ok else st.error(f"No pude guardar caja: {res}")
             if ok: st.rerun()
+
+        if caja_row:
+            st.divider()
+            st.markdown("**Eliminar caja del día**")
+            st.caption("Elimina solo el registro de cierre/apertura. No borra ventas ni gastos del día.")
+            confirmar = st.checkbox("Confirmo eliminar esta caja", key="confirm_del_caja")
+            if st.button("Eliminar caja", use_container_width=True, disabled=not confirmar):
+                ok, res = delete_safe("bradafin_cajas_diarias", "id", caja_row["id"])
+                st.success("Caja eliminada.") if ok else st.error(f"No pude eliminar caja: {res}")
+                if ok: st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
     with col2:
         st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
@@ -1950,8 +2069,7 @@ def render_caja(negocio, user_id, df_movs, df_cajas):
             st.dataframe(show, use_container_width=True, hide_index=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-
-def render_ventas_gastos(negocio, user_id, df_productos):
+def render_ventas_gastos(negocio, user_id, df_productos, df_movs):
     negocio_id = negocio["id"]
     st.markdown("<div class='hero-card'><div class='hero-badge'>Ventas y gastos</div><div class='hero-title'>Registre la operación del negocio.</div><div class='hero-sub'>Ventas, gastos, entradas/salidas de caja y compras de inventario.</div></div>", unsafe_allow_html=True)
     tipo = st.radio("Tipo de movimiento", TIPOS_MOVIMIENTO, horizontal=True, key="tipo_movimiento_brf")
@@ -1994,7 +2112,7 @@ def render_ventas_gastos(negocio, user_id, df_productos):
             if ok: st.rerun()
 
     st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
-    section_header("Categorías", "Agrega categorías propias para este tipo.")
+    section_header("Categorías", "Agrega, edita o elimina categorías propias para este tipo.")
     c1,c2 = st.columns([1, .55])
     with c1: nueva = st.text_input("Nueva categoría", key="new_cat")
     with c2:
@@ -2003,8 +2121,105 @@ def render_ventas_gastos(negocio, user_id, df_productos):
                 ok,res = insert_safe("bradafin_categorias", {"negocio_id": negocio_id, "usuario_id": user_id, "tipo": tipo, "nombre": nueva.strip(), "creado_en": datetime.now().isoformat()})
                 st.success("Categoría agregada.") if ok else st.error(f"No pude agregar: {res}")
                 if ok: st.rerun()
+
+    with st.expander("Editar o eliminar categoría"):
+        df_cats_tipo = obtener_categorias(negocio_id, tipo)
+        if df_cats_tipo.empty:
+            st.info("No hay categorías personalizadas para editar.")
+        else:
+            cat_labels = {str(r["id"]): str(r["nombre"]) for _, r in df_cats_tipo.iterrows()}
+            cat_id = st.selectbox("Categoría", list(cat_labels.keys()), format_func=lambda x: cat_labels.get(x, x), key="cat_edit_select")
+            cat_actual = df_cats_tipo[df_cats_tipo["id"].astype(str) == str(cat_id)].iloc[0].to_dict()
+            nuevo_nombre = st.text_input("Nuevo nombre", value=cat_actual.get("nombre", ""), key="cat_edit_nombre")
+            cedit, cdel = st.columns(2)
+            with cedit:
+                if st.button("Guardar categoría", type="primary", use_container_width=True):
+                    if nuevo_nombre.strip():
+                        ok,res = update_safe("bradafin_categorias", {"nombre": nuevo_nombre.strip()}, "id", cat_id)
+                        st.success("Categoría actualizada.") if ok else st.error(f"No pude actualizar: {res}")
+                        if ok: st.rerun()
+            with cdel:
+                confirmar = st.checkbox("Confirmar", key="cat_delete_confirm")
+                if st.button("Eliminar categoría", use_container_width=True, disabled=not confirmar):
+                    ok,res = delete_safe("bradafin_categorias", "id", cat_id)
+                    st.success("Categoría eliminada.") if ok else st.error(f"No pude eliminar: {res}")
+                    if ok: st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
+    st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+    section_header("Editar o eliminar movimientos", "Corrige registros mal digitados. Si cambias producto/cantidad, BradaFin ajusta el inventario.")
+    if df_movs.empty:
+        st.info("Todavía no hay movimientos para editar.")
+    else:
+        movs_edit = df_movs.sort_values("fecha", ascending=False).head(200).copy()
+        mov_labels = {}
+        for _, r in movs_edit.iterrows():
+            fecha_txt = pd.to_datetime(r["fecha"]).strftime("%Y-%m-%d") if pd.notna(r["fecha"]) else ""
+            desc = str(r.get("descripcion") or r.get("categoria") or "")[:36]
+            mov_labels[str(r["id"])] = f"{fecha_txt} · {r.get('tipo','')} · {money(r.get('monto',0))} · {desc}"
+        mov_id = st.selectbox("Movimiento a corregir", list(mov_labels.keys()), format_func=lambda x: mov_labels.get(x, x), key="mov_edit_select")
+        mov = movs_edit[movs_edit["id"].astype(str) == str(mov_id)].iloc[0].to_dict()
+
+        with st.form("mov_edit_form"):
+            c1,c2,c3 = st.columns([.8,.9,1])
+            with c1:
+                fecha_edit = st.date_input("Fecha", value=date_widget_value(mov.get("fecha")), key="mov_edit_fecha")
+            with c2:
+                tipo_edit = st.selectbox("Tipo", TIPOS_MOVIMIENTO, index=TIPOS_MOVIMIENTO.index(mov.get("tipo")) if mov.get("tipo") in TIPOS_MOVIMIENTO else 0, key="mov_edit_tipo")
+            cats_edit = lista_categorias(negocio_id, tipo_edit)
+            with c3:
+                categoria_edit = st.selectbox("Categoría", cats_edit, index=cats_edit.index(mov.get("categoria")) if mov.get("categoria") in cats_edit else 0, key="mov_edit_cat")
+            metodo_edit = st.selectbox("Método de pago", METODOS_PAGO, index=METODOS_PAGO.index(mov.get("metodo_pago")) if mov.get("metodo_pago") in METODOS_PAGO else 0, key="mov_edit_metodo")
+
+            producto_edit_id = None
+            cantidad_edit = float(mov.get("cantidad", 0) or 0)
+            costo_edit = float(mov.get("costo_unitario", 0) or 0)
+            precio_edit = float(mov.get("precio_unitario", 0) or 0)
+            if tipo_edit in ["Venta", "Compra inventario"] and not df_productos.empty:
+                productos_activos = df_productos[df_productos["activo"] == True].copy()
+                opciones = {"": "Sin producto específico"}
+                for _, r in productos_activos.iterrows():
+                    opciones[str(r["id"])] = f"{r['codigo']} · {r['nombre']} · stock {r['stock']}"
+                current_pid = id_limpio(mov.get("producto_id")) or ""
+                producto_edit_id = st.selectbox("Producto", list(opciones.keys()), index=list(opciones.keys()).index(current_pid) if current_pid in opciones else 0, format_func=lambda x: opciones.get(x, x), key="mov_edit_producto")
+                cantidad_edit = st.number_input("Cantidad", min_value=0.0, step=1.0, value=float(mov.get("cantidad", 0) or 0), key="mov_edit_cantidad")
+                if producto_edit_id:
+                    prod = productos_activos[productos_activos["id"].astype(str) == str(producto_edit_id)].iloc[0]
+                    costo_edit = float(prod["costo_unitario"] or 0)
+                    precio_edit = float(prod["precio_venta"] or 0)
+                    monto_sugerido = precio_edit * cantidad_edit if tipo_edit == "Venta" else costo_edit * cantidad_edit
+                    monto_edit = st.number_input("Monto total", min_value=0.0, step=1000.0, value=float(mov.get("monto", monto_sugerido) or monto_sugerido), key="mov_edit_monto")
+                else:
+                    monto_edit = st.number_input("Monto", min_value=0.0, step=1000.0, value=float(mov.get("monto", 0) or 0), key="mov_edit_monto2")
+            else:
+                monto_edit = st.number_input("Monto", min_value=0.0, step=1000.0, value=float(mov.get("monto", 0) or 0), key="mov_edit_monto3")
+            desc_edit = st.text_input("Descripción", value=str(mov.get("descripcion", "") or ""), key="mov_edit_desc")
+            guardar_edit = st.form_submit_button("Guardar corrección", type="primary", use_container_width=True)
+
+        if guardar_edit:
+            payload = {
+                "fecha": fecha_edit.isoformat(),
+                "tipo": tipo_edit,
+                "categoria": categoria_edit,
+                "monto": float(monto_edit or 0),
+                "metodo_pago": metodo_edit,
+                "descripcion": desc_edit.strip(),
+                "producto_id": producto_edit_id or None,
+                "cantidad": float(cantidad_edit or 0),
+                "costo_unitario": float(costo_edit or 0),
+                "precio_unitario": float(precio_edit or 0),
+            }
+            ok,res = actualizar_movimiento_con_stock(mov, payload)
+            st.success("Movimiento actualizado.") if ok else st.error(f"No pude actualizar: {res}")
+            if ok: st.rerun()
+
+        st.divider()
+        confirmar_mov = st.checkbox("Confirmo eliminar este movimiento", key="mov_delete_confirm")
+        if st.button("Eliminar movimiento", use_container_width=True, disabled=not confirmar_mov):
+            ok,res = eliminar_movimiento_con_stock(mov)
+            st.success("Movimiento eliminado.") if ok else st.error(f"No pude eliminar: {res}")
+            if ok: st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def render_clientes(negocio, user_id, df_clientes, df_cuentas, df_abonos):
     negocio_id = negocio["id"]
@@ -2027,6 +2242,38 @@ def render_clientes(negocio, user_id, df_clientes, df_cuentas, df_abonos):
                 st.success("Cliente guardado.") if ok else st.error(f"No pude guardar: {res}")
                 if ok: st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+        section_header("Editar o eliminar cliente", "Corrige datos de contacto o elimina registros duplicados.")
+        if df_clientes.empty:
+            st.info("Aún no hay clientes para editar.")
+        else:
+            labels = {str(r["id"]): f"{r['nombre']} · {r.get('documento','')}" for _, r in df_clientes.iterrows()}
+            cid = st.selectbox("Cliente", list(labels.keys()), format_func=lambda x: labels.get(x, x), key="cliente_edit_select")
+            cli = df_clientes[df_clientes["id"].astype(str) == str(cid)].iloc[0].to_dict()
+            with st.form("cliente_edit_form"):
+                nombre_e = st.text_input("Nombre completo", value=str(cli.get("nombre", "") or ""))
+                documento_e = st.text_input("Cédula / NIT", value=str(cli.get("documento", "") or ""))
+                telefono_e = st.text_input("WhatsApp", value=str(cli.get("telefono", "") or ""))
+                direccion_e = st.text_input("Dirección", value=str(cli.get("direccion", "") or ""))
+                obs_e = st.text_area("Observaciones internas", value=str(cli.get("observaciones", "") or ""))
+                guardar = st.form_submit_button("Guardar cambios", type="primary", use_container_width=True)
+            if guardar:
+                payload = {"nombre": nombre_e.strip(), "documento": documento_e.strip(), "telefono": limpiar_telefono(telefono_e), "direccion": direccion_e.strip(), "observaciones": obs_e.strip(), "actualizado_en": datetime.now().isoformat()}
+                ok,res = update_safe("bradafin_clientes", payload, "id", cid)
+                st.success("Cliente actualizado.") if ok else st.error(f"No pude actualizar: {res}")
+                if ok: st.rerun()
+            saldo = 0.0
+            if not df_cuentas.empty:
+                saldo = float(df_cuentas[(df_cuentas["tercero_id"] == cid) & (df_cuentas["tipo"] == "Por cobrar") & (df_cuentas["estado"] != "pagada")]["saldo_pendiente"].sum())
+            if saldo > 0:
+                st.warning(f"Este cliente tiene saldo pendiente por {money(saldo)}. Si intentas eliminarlo, Supabase puede bloquearlo por historial asociado.")
+            confirmar = st.checkbox("Confirmo eliminar este cliente", key="cliente_delete_confirm")
+            if st.button("Eliminar cliente", use_container_width=True, disabled=not confirmar):
+                ok,res = delete_safe("bradafin_clientes", "id", cid)
+                st.success("Cliente eliminado.") if ok else st.error(f"No pude eliminar. Puede tener cuentas asociadas. Detalle: {res}")
+                if ok: st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
     with col2:
         st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
         section_header("Lista de clientes", "Riesgo visible solo para el comerciante.")
@@ -2040,7 +2287,6 @@ def render_clientes(negocio, user_id, df_clientes, df_cuentas, df_abonos):
                     saldo = float(df_cuentas[(df_cuentas["tercero_id"] == cli["id"]) & (df_cuentas["tipo"] == "Por cobrar") & (df_cuentas["estado"] != "pagada")]["saldo_pendiente"].sum())
                 st.markdown(f"<div class='movement-row'><div><div class='movement-title'>{safe(cli['nombre'])}</div><div class='movement-sub'>{safe(cli.get('documento'))} · {safe(cli.get('telefono'))} · saldo {money(saldo)}</div></div><div><span class='pill {pill}'>{safe(label)} · {score}</span></div></div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
-
 
 def render_proveedores(negocio, user_id, df_proveedores):
     negocio_id = negocio["id"]
@@ -2063,6 +2309,33 @@ def render_proveedores(negocio, user_id, df_proveedores):
                 st.success("Proveedor guardado.") if ok else st.error(f"No pude guardar: {res}")
                 if ok: st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+        section_header("Editar o eliminar proveedor", "Corrige datos o elimina proveedores duplicados.")
+        if df_proveedores.empty:
+            st.info("Aún no hay proveedores para editar.")
+        else:
+            labels = {str(r["id"]): f"{r['nombre']} · {r.get('documento','')}" for _, r in df_proveedores.iterrows()}
+            pid = st.selectbox("Proveedor", list(labels.keys()), format_func=lambda x: labels.get(x, x), key="proveedor_edit_select")
+            prov = df_proveedores[df_proveedores["id"].astype(str) == str(pid)].iloc[0].to_dict()
+            with st.form("proveedor_edit_form"):
+                nombre_e = st.text_input("Nombre / razón social", value=str(prov.get("nombre", "") or ""))
+                documento_e = st.text_input("Cédula / NIT", value=str(prov.get("documento", "") or ""))
+                telefono_e = st.text_input("Teléfono", value=str(prov.get("telefono", "") or ""))
+                direccion_e = st.text_input("Dirección", value=str(prov.get("direccion", "") or ""))
+                obs_e = st.text_area("Observaciones", value=str(prov.get("observaciones", "") or ""))
+                guardar = st.form_submit_button("Guardar cambios", type="primary", use_container_width=True)
+            if guardar:
+                payload = {"nombre": nombre_e.strip(), "documento": documento_e.strip(), "telefono": limpiar_telefono(telefono_e), "direccion": direccion_e.strip(), "observaciones": obs_e.strip(), "actualizado_en": datetime.now().isoformat()}
+                ok,res = update_safe("bradafin_proveedores", payload, "id", pid)
+                st.success("Proveedor actualizado.") if ok else st.error(f"No pude actualizar: {res}")
+                if ok: st.rerun()
+            confirmar = st.checkbox("Confirmo eliminar este proveedor", key="proveedor_delete_confirm")
+            if st.button("Eliminar proveedor", use_container_width=True, disabled=not confirmar):
+                ok,res = delete_safe("bradafin_proveedores", "id", pid)
+                st.success("Proveedor eliminado.") if ok else st.error(f"No pude eliminar. Puede tener cuentas asociadas. Detalle: {res}")
+                if ok: st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
     with col2:
         st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
         section_header("Lista de proveedores", "Contactos para compras, crédito y pagos.")
@@ -2072,7 +2345,6 @@ def render_proveedores(negocio, user_id, df_proveedores):
             show = df_proveedores[["nombre","documento","telefono","direccion","observaciones"]].copy()
             st.dataframe(show, use_container_width=True, hide_index=True)
         st.markdown("</div>", unsafe_allow_html=True)
-
 
 def render_cuentas(negocio, user_id, df_clientes, df_proveedores, df_cuentas, df_abonos):
     negocio_id = negocio["id"]
@@ -2145,6 +2417,60 @@ def render_cuentas(negocio, user_id, df_clientes, df_proveedores, df_cuentas, df
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+    section_header("Editar o eliminar cuenta", "Corrige valores, fechas, saldo y estado cuando sea necesario.")
+    if df_cuentas.empty:
+        st.info("No hay cuentas para editar.")
+    else:
+        labels_all = {str(r["id"]): f"{r['tipo']} · {r['tercero_nombre']} · total {money(r['monto_total'])} · saldo {money(r['saldo_pendiente'])}" for _, r in df_cuentas.iterrows()}
+        cuenta_id = st.selectbox("Cuenta a modificar", list(labels_all.keys()), format_func=lambda x: labels_all.get(x, x), key="cuenta_edit_select")
+        cuenta_edit = df_cuentas[df_cuentas["id"].astype(str) == str(cuenta_id)].iloc[0].to_dict()
+        with st.form("cuenta_edit_form"):
+            tipo_e = st.selectbox("Tipo", TIPOS_CUENTA, index=TIPOS_CUENTA.index(cuenta_edit.get("tipo")) if cuenta_edit.get("tipo") in TIPOS_CUENTA else 0)
+            tercero_nombre_e = st.text_input("Cliente / proveedor", value=str(cuenta_edit.get("tercero_nombre", "") or ""))
+            documento_e = st.text_input("Documento", value=str(cuenta_edit.get("documento", "") or ""))
+            telefono_e = st.text_input("WhatsApp", value=str(cuenta_edit.get("telefono", "") or ""))
+            concepto_e = st.text_input("Concepto", value=str(cuenta_edit.get("concepto", "") or ""))
+            c1,c2 = st.columns(2)
+            with c1:
+                monto_total_e = st.number_input("Monto total", min_value=0.0, step=1000.0, value=float(cuenta_edit.get("monto_total", 0) or 0))
+            with c2:
+                saldo_e = st.number_input("Saldo pendiente", min_value=0.0, step=1000.0, value=float(cuenta_edit.get("saldo_pendiente", 0) or 0))
+            c3,c4 = st.columns(2)
+            with c3:
+                fecha_e = st.date_input("Fecha", value=date_widget_value(cuenta_edit.get("fecha")))
+            with c4:
+                venc_e = st.date_input("Vencimiento", value=date_widget_value(cuenta_edit.get("fecha_vencimiento"), date.today() + timedelta(days=7)))
+            estado_e = st.selectbox("Estado", ESTADOS_CUENTA, index=ESTADOS_CUENTA.index(cuenta_edit.get("estado")) if cuenta_edit.get("estado") in ESTADOS_CUENTA else 0)
+            obs_e = st.text_area("Observaciones", value=str(cuenta_edit.get("observaciones", "") or ""))
+            guardar = st.form_submit_button("Guardar cambios de cuenta", type="primary", use_container_width=True)
+        if guardar:
+            payload = {
+                "tipo": tipo_e,
+                "tercero_nombre": tercero_nombre_e.strip(),
+                "documento": documento_e.strip(),
+                "telefono": limpiar_telefono(telefono_e),
+                "concepto": concepto_e.strip(),
+                "monto_total": float(monto_total_e or 0),
+                "saldo_pendiente": float(saldo_e or 0),
+                "fecha": fecha_e.isoformat(),
+                "fecha_vencimiento": venc_e.isoformat() if venc_e else None,
+                "estado": estado_e,
+                "observaciones": obs_e.strip(),
+                "actualizado_en": datetime.now().isoformat(),
+            }
+            ok,res = update_safe("bradafin_cuentas", payload, "id", cuenta_id)
+            st.success("Cuenta actualizada.") if ok else st.error(f"No pude actualizar: {res}")
+            if ok: st.rerun()
+        st.divider()
+        st.caption("Eliminar una cuenta también elimina sus abonos asociados. Los movimientos de caja creados por abonos pueden corregirse desde Ventas y gastos si quedaron registrados.")
+        confirmar_cuenta = st.checkbox("Confirmo eliminar esta cuenta y sus abonos", key="cuenta_delete_confirm")
+        if st.button("Eliminar cuenta", use_container_width=True, disabled=not confirmar_cuenta):
+            ok,res = eliminar_cuenta_y_abonos(cuenta_id)
+            st.success("Cuenta eliminada.") if ok else st.error(f"No pude eliminar cuenta: {res}")
+            if ok: st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
     section_header("Historial de abonos", "Fechas y pagos realizados.")
     if df_abonos.empty:
         st.info("Aún no hay abonos registrados.")
@@ -2153,7 +2479,6 @@ def render_cuentas(negocio, user_id, df_clientes, df_proveedores, df_cuentas, df
         show["fecha"] = show["fecha"].dt.strftime("%Y-%m-%d")
         st.dataframe(show, use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
-
 
 def render_inventario(negocio, user_id, df_productos, df_movs):
     negocio_id = negocio["id"]
@@ -2204,6 +2529,55 @@ def render_inventario(negocio, user_id, df_productos, df_movs):
                 st.success(f"Producto guardado con código {final_codigo}.") if ok else st.error(f"No pude guardar: {res}")
                 if ok: st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+        section_header("Editar o eliminar producto", "Actualiza precio, costo, stock, código o desactiva productos.")
+        if df_productos.empty:
+            st.info("Aún no hay productos para editar.")
+        else:
+            labels = {str(r["id"]): f"{r['codigo']} · {r['nombre']} · stock {r['stock']}" for _, r in df_productos.iterrows()}
+            prod_id = st.selectbox("Producto", list(labels.keys()), format_func=lambda x: labels.get(x, x), key="producto_edit_select")
+            prod = df_productos[df_productos["id"].astype(str) == str(prod_id)].iloc[0].to_dict()
+            with st.form("producto_edit_form"):
+                codigo_e = st.text_input("Código / código de barras", value=str(prod.get("codigo", "") or ""))
+                nombre_e = st.text_input("Nombre del producto", value=str(prod.get("nombre", "") or ""))
+                categoria_e = st.text_input("Categoría", value=str(prod.get("categoria", "") or "General"))
+                c1,c2 = st.columns(2)
+                with c1: costo_e = st.number_input("Costo unitario", min_value=0.0, step=1000.0, value=float(prod.get("costo_unitario", 0) or 0))
+                with c2: precio_e = st.number_input("Precio venta", min_value=0.0, step=1000.0, value=float(prod.get("precio_venta", 0) or 0))
+                c3,c4 = st.columns(2)
+                with c3: stock_e = st.number_input("Stock actual", min_value=0.0, step=1.0, value=float(prod.get("stock", 0) or 0))
+                with c4: stock_min_e = st.number_input("Stock mínimo", min_value=0.0, step=1.0, value=float(prod.get("stock_minimo", 0) or 0))
+                activo_e = st.checkbox("Producto activo", value=bool(prod.get("activo", True)))
+                guardar = st.form_submit_button("Guardar cambios", type="primary", use_container_width=True)
+            if guardar:
+                codigo_norm = normalizar_codigo_producto(codigo_e)
+                duplicado = buscar_producto_por_codigo(df_productos[df_productos["id"].astype(str) != str(prod_id)].copy(), codigo_norm)
+                if not nombre_e.strip():
+                    st.error("Escribe el nombre del producto.")
+                elif not codigo_norm:
+                    st.error("El código no puede quedar vacío.")
+                elif duplicado:
+                    st.error(f"Ya existe otro producto con ese código: {duplicado.get('nombre')}.")
+                else:
+                    payload = {"codigo": codigo_norm, "nombre": nombre_e.strip(), "categoria": categoria_e.strip(), "costo_unitario": float(costo_e or 0), "precio_venta": float(precio_e or 0), "stock": float(stock_e or 0), "stock_minimo": float(stock_min_e or 0), "activo": bool(activo_e), "actualizado_en": datetime.now().isoformat()}
+                    ok,res = update_safe("bradafin_productos", payload, "id", prod_id)
+                    st.success("Producto actualizado.") if ok else st.error(f"No pude actualizar: {res}")
+                    if ok: st.rerun()
+            st.divider()
+            st.caption("Si el producto tiene movimientos asociados, Supabase puede bloquear la eliminación. En ese caso BradaFin lo desactiva para no dañar el historial.")
+            confirmar = st.checkbox("Confirmo eliminar/desactivar este producto", key="producto_delete_confirm")
+            if st.button("Eliminar producto", use_container_width=True, disabled=not confirmar):
+                ok,res = delete_safe("bradafin_productos", "id", prod_id)
+                if ok:
+                    st.success("Producto eliminado.")
+                    st.rerun()
+                else:
+                    ok2,res2 = update_safe("bradafin_productos", {"activo": False, "actualizado_en": datetime.now().isoformat()}, "id", prod_id)
+                    st.warning("No se pudo eliminar porque tiene historial. Lo dejé desactivado para que no aparezca al vender.") if ok2 else st.error(f"No pude eliminar ni desactivar: {res}")
+                    if ok2: st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
     with col2:
         st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
         section_header("Rentabilidad y rotación", "Productos que más se mueven y margen.")
@@ -2227,7 +2601,7 @@ def render_inventario(negocio, user_id, df_productos, df_movs):
             ventas = df_movs[df_movs["tipo"] == "Venta"].copy() if not df_movs.empty else pd.DataFrame()
             rot = ventas.groupby("producto_id")["cantidad"].sum().to_dict() if not ventas.empty and "producto_id" in ventas.columns else {}
             dfp["rotación"] = dfp["id"].map(rot).fillna(0)
-            show = dfp[["codigo","nombre","categoria","costo_unitario","precio_venta","margen_$","margen_%","stock","stock_minimo","rotación"]].copy()
+            show = dfp[["codigo","nombre","categoria","costo_unitario","precio_venta","margen_$","margen_%","stock","stock_minimo","rotación","activo"]].copy()
             show["margen_%"] = show["margen_%"].map(lambda x: f"{x*100:.1f}%")
             st.dataframe(show, use_container_width=True, hide_index=True)
             fig = px.bar(dfp.sort_values("rotación", ascending=False).head(10), x="nombre", y="rotación", title="Productos con mayor rotación")
@@ -2248,7 +2622,6 @@ def render_inventario(negocio, user_id, df_productos, df_movs):
         else:
             st.info("Para imagen de código instala python-barcode y pillow. El código interno ya está guardado.")
         st.markdown("</div>", unsafe_allow_html=True)
-
 
 def render_reportes(negocio, user_id, df_movs, df_cuentas, df_productos):
     st.markdown("<div class='hero-card'><div class='hero-badge'>Reportes</div><div class='hero-title'>Diario, semanal y mensual.</div><div class='hero-sub'>PDF premium, Excel y balance empresarial para tomar decisiones.</div></div>", unsafe_allow_html=True)
@@ -2515,7 +2888,7 @@ def main():
     pagina = st.session_state.pagina
     if pagina == "Inicio": render_inicio(negocio, user_id, df_movs, df_cuentas, df_productos)
     elif pagina == "Caja diaria": render_caja(negocio, user_id, df_movs, df_cajas)
-    elif pagina == "Ventas y gastos": render_ventas_gastos(negocio, user_id, df_productos)
+    elif pagina == "Ventas y gastos": render_ventas_gastos(negocio, user_id, df_productos, df_movs)
     elif pagina == "Clientes": render_clientes(negocio, user_id, df_clientes, df_cuentas, df_abonos)
     elif pagina == "Proveedores": render_proveedores(negocio, user_id, df_proveedores)
     elif pagina == "Cuentas": render_cuentas(negocio, user_id, df_clientes, df_proveedores, df_cuentas, df_abonos)
