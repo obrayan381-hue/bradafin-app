@@ -18,7 +18,7 @@ try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
     REPORTLAB_AVAILABLE = True
 except Exception:
     REPORTLAB_AVAILABLE = False
@@ -1714,34 +1714,291 @@ def exportar_excel(df, filename="bradafin_export.xlsx"):
 def generar_pdf_reporte(negocio, periodo, fecha_base, metricas, df_movs, df_cuentas, df_productos):
     if not REPORTLAB_AVAILABLE:
         return None
+
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=34, leftMargin=34, topMargin=34, bottomMargin=34)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=32,
+    )
+
+    # Paleta BradaFin premium
+    VERDE_OSCURO = colors.HexColor("#102019")
+    VERDE = colors.HexColor("#14513D")
+    VERDE_MEDIO = colors.HexColor("#1F6B4F")
+    DORADO = colors.HexColor("#D4A017")
+    DORADO_SUAVE = colors.HexColor("#FFF4CF")
+    CREMA = colors.HexColor("#FFFCF3")
+    CREMA2 = colors.HexColor("#F6FAF4")
+    TEXTO = colors.HexColor("#102019")
+    MUTED = colors.HexColor("#52675C")
+    LINEA = colors.HexColor("#DDE8DF")
+    ROJO = colors.HexColor("#C2410C")
+
     styles = getSampleStyleSheet()
-    title = ParagraphStyle("TitleBrada", parent=styles["Title"], textColor=colors.HexColor("#102019"), fontSize=22, leading=26)
-    h = ParagraphStyle("HBrada", parent=styles["Heading2"], textColor=colors.HexColor("#14513D"), fontSize=14, leading=18)
-    p = ParagraphStyle("PBrada", parent=styles["BodyText"], textColor=colors.HexColor("#102019"), fontSize=9.4, leading=14)
+    title = ParagraphStyle(
+        "TitleBradaPremium",
+        parent=styles["Title"],
+        textColor=VERDE_OSCURO,
+        fontName="Helvetica-Bold",
+        fontSize=22,
+        leading=26,
+        alignment=2,
+        spaceAfter=0,
+    )
+    subtitle = ParagraphStyle(
+        "SubtitleBradaPremium",
+        parent=styles["BodyText"],
+        textColor=MUTED,
+        fontName="Helvetica",
+        fontSize=9,
+        leading=12,
+        alignment=2,
+    )
+    h = ParagraphStyle(
+        "HBradaPremium",
+        parent=styles["Heading2"],
+        textColor=VERDE,
+        fontName="Helvetica-Bold",
+        fontSize=14,
+        leading=18,
+        spaceBefore=8,
+        spaceAfter=7,
+    )
+    p = ParagraphStyle(
+        "PBradaPremium",
+        parent=styles["BodyText"],
+        textColor=TEXTO,
+        fontName="Helvetica",
+        fontSize=9.2,
+        leading=13,
+    )
+    p_muted = ParagraphStyle(
+        "PMutedBradaPremium",
+        parent=p,
+        textColor=MUTED,
+        fontSize=8.3,
+        leading=11,
+    )
+    hero_title = ParagraphStyle(
+        "HeroTitleBradaPremium",
+        parent=styles["BodyText"],
+        textColor=colors.white,
+        fontName="Helvetica-Bold",
+        fontSize=13,
+        leading=16,
+    )
+    hero_text = ParagraphStyle(
+        "HeroTextBradaPremium",
+        parent=styles["BodyText"],
+        textColor=colors.HexColor("#EAF8F1"),
+        fontName="Helvetica",
+        fontSize=8.7,
+        leading=12,
+    )
+    card_label = ParagraphStyle(
+        "CardLabelBradaPremium",
+        parent=styles["BodyText"],
+        textColor=MUTED,
+        fontName="Helvetica-Bold",
+        fontSize=7.4,
+        leading=9,
+        uppercase=True,
+    )
+    card_value = ParagraphStyle(
+        "CardValueBradaPremium",
+        parent=styles["BodyText"],
+        textColor=VERDE_OSCURO,
+        fontName="Helvetica-Bold",
+        fontSize=11.5,
+        leading=14,
+    )
+    card_value_green = ParagraphStyle(
+        "CardValueGreenBradaPremium",
+        parent=card_value,
+        textColor=VERDE,
+    )
+    card_value_red = ParagraphStyle(
+        "CardValueRedBradaPremium",
+        parent=card_value,
+        textColor=ROJO,
+    )
+    table_head = ParagraphStyle(
+        "TableHeadBradaPremium",
+        parent=styles["BodyText"],
+        textColor=colors.white,
+        fontName="Helvetica-Bold",
+        fontSize=7.5,
+        leading=9,
+    )
+    table_cell = ParagraphStyle(
+        "TableCellBradaPremium",
+        parent=styles["BodyText"],
+        textColor=TEXTO,
+        fontName="Helvetica",
+        fontSize=7.3,
+        leading=9.2,
+    )
+    table_money = ParagraphStyle(
+        "TableMoneyBradaPremium",
+        parent=table_cell,
+        fontName="Helvetica-Bold",
+        textColor=VERDE_OSCURO,
+    )
+
+    def pdf_text(value):
+        return safe(value).replace("\n", "<br/>")
+
+    def page_bg(canvas, doc_obj):
+        canvas.saveState()
+        width, height = A4
+        canvas.setFillColor(CREMA)
+        canvas.rect(0, 0, width, height, fill=1, stroke=0)
+        canvas.setFillColor(CREMA2)
+        canvas.rect(0, 0, width, height * 0.78, fill=1, stroke=0)
+
+        # Franja superior sutil premium
+        canvas.setFillColor(VERDE_OSCURO)
+        canvas.rect(0, height - 18, width, 18, fill=1, stroke=0)
+        canvas.setFillColor(DORADO)
+        canvas.rect(0, height - 20, width, 2, fill=1, stroke=0)
+
+        # Footer
+        canvas.setFillColor(MUTED)
+        canvas.setFont("Helvetica", 7.2)
+        canvas.drawString(30, 18, "BradaFin - control interno para microempresas")
+        canvas.drawRightString(width - 30, 18, f"Pagina {doc_obj.page}")
+        canvas.restoreState()
+
+    def make_logo():
+        logo_path = None
+        try:
+            if BRADAFIN_LOGO_FULL_PATH and Path(BRADAFIN_LOGO_FULL_PATH).exists():
+                logo_path = BRADAFIN_LOGO_FULL_PATH
+            elif BRADAFIN_ICON_PATH and Path(BRADAFIN_ICON_PATH).exists():
+                logo_path = BRADAFIN_ICON_PATH
+        except Exception:
+            logo_path = None
+
+        if logo_path:
+            try:
+                img = Image(str(logo_path), width=132, height=46, kind="proportional")
+                img.hAlign = "LEFT"
+                return img
+            except Exception:
+                pass
+        return Paragraph("<b>BradaFin</b>", ParagraphStyle(
+            "LogoFallbackBrada",
+            parent=styles["Heading1"],
+            textColor=VERDE,
+            fontName="Helvetica-Bold",
+            fontSize=20,
+            leading=24,
+        ))
+
+    def metric_card(label, value, tone="normal"):
+        value_style = card_value_green if tone == "green" else card_value_red if tone == "red" else card_value
+        return [
+            Paragraph(str(label).upper(), card_label),
+            Paragraph(pdf_text(value), value_style),
+        ]
+
     story = []
-    story.append(Paragraph("BradaFin · Reporte empresarial", title))
-    story.append(Paragraph(f"{safe((negocio or {}).get('nombre','Negocio'))} · {periodo} · {pd.Timestamp(fecha_base).date()}", p))
-    story.append(Spacer(1, 10))
-    cards = [
-        ["Ventas", money(metricas["ventas"]), "Gastos", money(metricas["gastos"])],
-        ["Utilidad estimada", money(metricas["utilidad_estimada"]), "Margen bruto", pct(metricas["margen"])],
-        ["Cartera por cobrar", money(metricas["cxc"]), "Cuentas por pagar", money(metricas["cxp"])],
-        ["Inventario en capital", money(metricas["capital_inventario"]), "Stock bajo", str(metricas["stock_bajo"])],
-    ]
-    t = Table(cards, colWidths=[90, 110, 110, 110])
-    t.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#F8F1D8")),
-        ("TEXTCOLOR", (0,0), (-1,-1), colors.HexColor("#102019")),
-        ("GRID", (0,0), (-1,-1), .35, colors.HexColor("#D4A017")),
-        ("FONTNAME", (0,0), (-1,-1), "Helvetica-Bold"),
-        ("FONTSIZE", (0,0), (-1,-1), 9),
+
+    negocio_nombre = (negocio or {}).get("nombre", "Negocio")
+    fecha_txt = pd.Timestamp(fecha_base).strftime("%Y-%m-%d")
+    margen_tono = "green" if float(metricas.get("margen", 0) or 0) >= float((negocio or {}).get("margen_objetivo", 0.30) or 0.30) else "red"
+    utilidad_tono = "green" if float(metricas.get("utilidad_estimada", 0) or 0) >= 0 else "red"
+
+    # Header con logo
+    header_table = Table(
+        [[
+            make_logo(),
+            [
+                Paragraph("Reporte empresarial", title),
+                Paragraph(f"{pdf_text(negocio_nombre)}  |  {periodo}  |  {fecha_txt}", subtitle),
+            ],
+        ]],
+        colWidths=[168, 365],
+        rowHeights=[54],
+    )
+    header_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.white),
+        ("BOX", (0,0), (-1,-1), 0.4, LINEA),
+        ("LEFTPADDING", (0,0), (-1,-1), 12),
+        ("RIGHTPADDING", (0,0), (-1,-1), 12),
+        ("TOPPADDING", (0,0), (-1,-1), 7),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
         ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("ROWBACKGROUNDS", (0,0), (-1,-1), [colors.HexColor("#FFF8DD"), colors.HexColor("#F1FAF4")]),
+        ("ROUNDEDCORNERS", [14, 14, 14, 14]),
     ]))
-    story.append(t)
+    story.append(header_table)
+    story.append(Spacer(1, 10))
+
+    # Hero / lectura ejecutiva
+    hero_data = [[
+        [
+            Paragraph("Lectura ejecutiva del periodo", hero_title),
+            Paragraph("Resumen para tomar decisiones: ventas, utilidad, cartera, inventario y alertas clave en una sola vista.", hero_text),
+        ],
+        [
+            Paragraph("CONTROL", hero_text),
+            Paragraph("Caja - Ventas - Cartera - Inventario", hero_title),
+        ],
+    ]]
+    hero = Table(hero_data, colWidths=[345, 188], rowHeights=[66])
+    hero.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), VERDE_OSCURO),
+        ("TEXTCOLOR", (0,0), (-1,-1), colors.white),
+        ("BOX", (0,0), (-1,-1), 0.1, VERDE_OSCURO),
+        ("LINEBEFORE", (1,0), (1,0), 1.0, DORADO),
+        ("LEFTPADDING", (0,0), (-1,-1), 14),
+        ("RIGHTPADDING", (0,0), (-1,-1), 14),
+        ("TOPPADDING", (0,0), (-1,-1), 11),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+    ]))
+    story.append(hero)
     story.append(Spacer(1, 12))
+
+    # Indicadores en tarjetas
+    cards_row_1 = [
+        metric_card("Ventas", money(metricas["ventas"]), "green"),
+        metric_card("Gastos", money(metricas["gastos"]), "red" if metricas["gastos"] > 0 else "normal"),
+        metric_card("Utilidad estimada", money(metricas["utilidad_estimada"]), utilidad_tono),
+        metric_card("Margen bruto", pct(metricas["margen"]), margen_tono),
+    ]
+    cards_row_2 = [
+        metric_card("Cartera por cobrar", money(metricas["cxc"]), "red" if metricas["cxc"] > 0 else "normal"),
+        metric_card("Cuentas por pagar", money(metricas["cxp"]), "red" if metricas["cxp"] > 0 else "normal"),
+        metric_card("Inventario en capital", money(metricas["capital_inventario"]), "normal"),
+        metric_card("Stock bajo", str(metricas["stock_bajo"]), "red" if metricas["stock_bajo"] else "green"),
+    ]
+
+    card_table = Table(
+        [cards_row_1, cards_row_2],
+        colWidths=[128, 128, 128, 128],
+        rowHeights=[52, 52],
+        hAlign="CENTER",
+    )
+    card_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.white),
+        ("GRID", (0,0), (-1,-1), 0.35, colors.HexColor("#E4EBDD")),
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#FFF8DD")),
+        ("BACKGROUND", (0,1), (-1,1), colors.HexColor("#F4FBF5")),
+        ("LEFTPADDING", (0,0), (-1,-1), 10),
+        ("RIGHTPADDING", (0,0), (-1,-1), 10),
+        ("TOPPADDING", (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+    ]))
+    story.append(card_table)
+    story.append(Spacer(1, 14))
+
+    # Lectura rápida
     story.append(Paragraph("Lectura rápida", h))
     lectura = []
     if metricas["ventas"] <= 0:
@@ -1749,38 +2006,144 @@ def generar_pdf_reporte(negocio, periodo, fecha_base, metricas, df_movs, df_cuen
     elif metricas["utilidad_estimada"] >= 0:
         lectura.append("El periodo muestra utilidad estimada positiva.")
     else:
-        lectura.append("El periodo muestra utilidad estimada negativa; revise costos y gastos.")
+        lectura.append("El periodo muestra utilidad estimada negativa; revise costos, gastos y precios.")
+    if metricas["margen"] > 0:
+        margen_obj = float((negocio or {}).get("margen_objetivo", 0.30) or 0.30)
+        if metricas["margen"] >= margen_obj:
+            lectura.append(f"El margen bruto está en {pct(metricas['margen'])}, alineado o por encima del objetivo.")
+        else:
+            lectura.append(f"El margen bruto está en {pct(metricas['margen'])}; conviene revisar costos o precio de venta.")
     if metricas["vencidas"] > 0:
-        lectura.append(f"Hay {metricas['vencidas']} cuenta(s) por cobrar vencidas.")
+        lectura.append(f"Hay {metricas['vencidas']} cuenta(s) por cobrar vencidas; prioridad comercial: cobrar hoy.")
     if metricas["stock_bajo"] > 0:
-        lectura.append(f"Hay {metricas['stock_bajo']} producto(s) con stock bajo.")
-    for item in lectura:
-        story.append(Paragraph(f"• {safe(item)}", p))
-    story.append(Spacer(1, 12))
+        lectura.append(f"Hay {metricas['stock_bajo']} producto(s) con stock bajo; revise reposición.")
+    if not lectura:
+        lectura.append("No hay alertas fuertes en este periodo.")
+
+    lectura_data = [[Paragraph("Punto clave", table_head), Paragraph("Recomendación", table_head)]]
+    for idx, item in enumerate(lectura, start=1):
+        lectura_data.append([
+            Paragraph(f"{idx:02d}", table_money),
+            Paragraph(pdf_text(item), table_cell),
+        ])
+    lectura_tbl = Table(lectura_data, colWidths=[56, 477])
+    lectura_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), VERDE),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("BACKGROUND", (0,1), (-1,-1), colors.white),
+        ("GRID", (0,0), (-1,-1), 0.25, LINEA),
+        ("LINEBEFORE", (1,1), (1,-1), 1, DORADO),
+        ("LEFTPADDING", (0,0), (-1,-1), 8),
+        ("RIGHTPADDING", (0,0), (-1,-1), 8),
+        ("TOPPADDING", (0,0), (-1,-1), 6),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+    ]))
+    story.append(lectura_tbl)
+    story.append(Spacer(1, 14))
+
+    # Top productos / inventario si hay datos
+    if df_productos is not None and not df_productos.empty:
+        try:
+            dfp = df_productos.copy()
+            dfp["margen_$"] = pd.to_numeric(dfp["precio_venta"], errors="coerce").fillna(0) - pd.to_numeric(dfp["costo_unitario"], errors="coerce").fillna(0)
+            ventas = metricas.get("df_periodo", pd.DataFrame())
+            rot = ventas[ventas["tipo"] == "Venta"].groupby("producto_id")["cantidad"].sum().to_dict() if isinstance(ventas, pd.DataFrame) and not ventas.empty and "producto_id" in ventas.columns else {}
+            dfp["rotacion"] = dfp["id"].map(rot).fillna(0)
+            top = dfp.sort_values(["rotacion", "margen_$"], ascending=False).head(5)
+            if not top.empty:
+                story.append(Paragraph("Inventario destacado", h))
+                prod_data = [[
+                    Paragraph("Producto", table_head),
+                    Paragraph("Stock", table_head),
+                    Paragraph("Precio", table_head),
+                    Paragraph("Margen $", table_head),
+                    Paragraph("Rotacion", table_head),
+                ]]
+                for _, r in top.iterrows():
+                    prod_data.append([
+                        Paragraph(pdf_text(str(r.get("nombre", ""))[:34]), table_cell),
+                        Paragraph(str(float(r.get("stock", 0) or 0)).rstrip("0").rstrip("."), table_money),
+                        Paragraph(money(r.get("precio_venta", 0)), table_money),
+                        Paragraph(money(r.get("margen_$", 0)), table_money),
+                        Paragraph(str(float(r.get("rotacion", 0) or 0)).rstrip("0").rstrip("."), table_money),
+                    ])
+                prod_tbl = Table(prod_data, colWidths=[203, 65, 85, 85, 95])
+                prod_tbl.setStyle(TableStyle([
+                    ("BACKGROUND", (0,0), (-1,0), VERDE_OSCURO),
+                    ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+                    ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#F6FAF4")]),
+                    ("GRID", (0,0), (-1,-1), 0.25, LINEA),
+                    ("LINEBELOW", (0,0), (-1,0), 1.1, DORADO),
+                    ("LEFTPADDING", (0,0), (-1,-1), 7),
+                    ("RIGHTPADDING", (0,0), (-1,-1), 7),
+                    ("TOPPADDING", (0,0), (-1,-1), 5),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+                    ("VALIGN", (0,0), (-1,-1), "TOP"),
+                ]))
+                story.append(prod_tbl)
+                story.append(Spacer(1, 12))
+        except Exception:
+            pass
+
+    # Movimientos del periodo
     story.append(Paragraph("Movimientos del periodo", h))
-    df_rep = metricas.get("df_periodo", pd.DataFrame()).sort_values("fecha", ascending=False).head(24)
-    if df_rep.empty:
+    df_rep = metricas.get("df_periodo", pd.DataFrame())
+    if isinstance(df_rep, pd.DataFrame) and not df_rep.empty:
+        df_rep = df_rep.sort_values("fecha", ascending=False).head(28)
+    if not isinstance(df_rep, pd.DataFrame) or df_rep.empty:
         story.append(Paragraph("Sin movimientos en este periodo.", p))
     else:
-        data = [["Fecha", "Tipo", "Categoría", "Monto", "Descripción"]]
+        data = [[
+            Paragraph("Fecha", table_head),
+            Paragraph("Tipo", table_head),
+            Paragraph("Categoria", table_head),
+            Paragraph("Monto", table_head),
+            Paragraph("Descripcion", table_head),
+        ]]
         for r in df_rep.itertuples():
-            data.append([str(r.fecha.date()) if pd.notna(r.fecha) else "", r.tipo, r.categoria, money(r.monto), str(r.descripcion)[:34]])
-        tbl = Table(data, colWidths=[58, 86, 92, 78, 160])
+            fecha_val = str(r.fecha.date()) if pd.notna(r.fecha) else ""
+            data.append([
+                Paragraph(pdf_text(fecha_val), table_cell),
+                Paragraph(pdf_text(str(r.tipo)[:22]), table_cell),
+                Paragraph(pdf_text(str(r.categoria)[:24]), table_cell),
+                Paragraph(pdf_text(money(r.monto)), table_money),
+                Paragraph(pdf_text(str(r.descripcion)[:54]), table_cell),
+            ])
+        tbl = Table(data, colWidths=[58, 86, 92, 78, 219], repeatRows=1)
         tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#14513D")),
+            ("BACKGROUND", (0,0), (-1,0), VERDE_OSCURO),
             ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-            ("GRID", (0,0), (-1,-1), .25, colors.HexColor("#D7E6DB")),
-            ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#F8FBF7")]),
-            ("FONTSIZE", (0,0), (-1,-1), 7.7),
-            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("LINEBELOW", (0,0), (-1,0), 1.2, DORADO),
+            ("GRID", (0,0), (-1,-1), 0.25, LINEA),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#F6FAF4")]),
+            ("LEFTPADDING", (0,0), (-1,-1), 6),
+            ("RIGHTPADDING", (0,0), (-1,-1), 6),
+            ("TOPPADDING", (0,0), (-1,-1), 5),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 5),
             ("VALIGN", (0,0), (-1,-1), "TOP"),
         ]))
         story.append(tbl)
+
     story.append(Spacer(1, 14))
-    story.append(Paragraph("Nota: este reporte es de control interno y no reemplaza contabilidad ni facturación electrónica.", p))
-    doc.build(story)
+    note = Table(
+        [[Paragraph("<b>Nota de control:</b> este reporte es de uso interno. No reemplaza contabilidad, asesoría tributaria ni facturación electrónica.", p_muted)]],
+        colWidths=[533],
+    )
+    note.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#FFF8DD")),
+        ("BOX", (0,0), (-1,-1), 0.4, DORADO),
+        ("LEFTPADDING", (0,0), (-1,-1), 10),
+        ("RIGHTPADDING", (0,0), (-1,-1), 10),
+        ("TOPPADDING", (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+    ]))
+    story.append(note)
+
+    doc.build(story, onFirstPage=page_bg, onLaterPages=page_bg)
     buffer.seek(0)
     return buffer.getvalue()
+
 
 # ============================================================
 # OPERACIONES DE NEGOCIO
