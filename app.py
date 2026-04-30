@@ -316,9 +316,7 @@ def aplicar_estilo_bradafin():
         /* =================================================== */
         .stButton > button,
         .stDownloadButton > button,
-        .stFormSubmitButton > button,
-        button[data-testid="baseButton-secondary"],
-        button[data-testid="baseButton-primaryFormSubmit"] {
+        button[data-testid="baseButton-secondary"] {
             border-radius: 18px !important;
             min-height: 50px !important;
             font-weight: 950 !important;
@@ -334,9 +332,7 @@ def aplicar_estilo_bradafin():
 
         .stButton > button:hover,
         .stDownloadButton > button:hover,
-        .stFormSubmitButton > button:hover,
-        button[data-testid="baseButton-secondary"]:hover,
-        button[data-testid="baseButton-primaryFormSubmit"]:hover {
+        button[data-testid="baseButton-secondary"]:hover {
             transform: translateY(-1px) !important;
             color: var(--text) !important;
             background:
@@ -347,9 +343,7 @@ def aplicar_estilo_bradafin():
 
         .stButton > button[kind="primary"],
         .stDownloadButton > button[kind="primary"],
-        .stFormSubmitButton > button,
-        button[data-testid="baseButton-primary"],
-        button[data-testid="baseButton-primaryFormSubmit"] {
+        button[data-testid="baseButton-primary"] {
             background: linear-gradient(135deg, #102019 0%, #14513D 35%, #1F6B4F 70%, #D4A017 100%) !important;
             color: white !important;
             border: none !important;
@@ -358,17 +352,13 @@ def aplicar_estilo_bradafin():
 
         .stButton > button[kind="primary"] *,
         .stDownloadButton > button[kind="primary"] *,
-        .stFormSubmitButton > button *,
-        button[data-testid="baseButton-primary"] *,
-        button[data-testid="baseButton-primaryFormSubmit"] * {
+        button[data-testid="baseButton-primary"] * {
             color: white !important;
         }
 
         .stButton > button[kind="primary"]:hover,
         .stDownloadButton > button[kind="primary"]:hover,
-        .stFormSubmitButton > button:hover,
-        button[data-testid="baseButton-primary"]:hover,
-        button[data-testid="baseButton-primaryFormSubmit"]:hover {
+        button[data-testid="baseButton-primary"]:hover {
             filter: brightness(1.04) saturate(1.05) !important;
             box-shadow: 0 22px 40px rgba(31,107,79,.30) !important;
         }
@@ -655,44 +645,6 @@ def aplicar_estilo_bradafin():
             stroke: #102019 !important;
         }
 
-
-
-        /* Botones del sidebar visibles aun cuando esten desactivados en configuracion inicial */
-        section[data-testid="stSidebar"] .stButton > button:disabled,
-        section[data-testid="stSidebar"] button:disabled {
-            opacity: .88 !important;
-            cursor: not-allowed !important;
-            background:
-                linear-gradient(180deg, #FFFFFF 0%, #F7FAF3 100%) padding-box,
-                linear-gradient(135deg, rgba(31,107,79,.45), rgba(212,160,23,.55)) border-box !important;
-            color: #14513D !important;
-            border: 1px solid rgba(31,107,79,.16) !important;
-            box-shadow: 0 8px 16px rgba(16,32,25,.055) !important;
-        }
-
-        section[data-testid="stSidebar"] .stButton > button:disabled *,
-        section[data-testid="stSidebar"] button:disabled * {
-            color: #14513D !important;
-            opacity: 1 !important;
-        }
-
-        /* En formularios, evita que Streamlit vuelva a poner botones rojos por defecto */
-        .stFormSubmitButton > button,
-        button[data-testid="baseButton-primaryFormSubmit"] {
-            background: linear-gradient(135deg, #102019 0%, #14513D 35%, #1F6B4F 70%, #D4A017 100%) !important;
-            color: #FFFFFF !important;
-            border: none !important;
-            border-radius: 18px !important;
-            min-height: 50px !important;
-            font-weight: 950 !important;
-            box-shadow: 0 18px 34px rgba(31,107,79,.26) !important;
-        }
-
-        .stFormSubmitButton > button *,
-        button[data-testid="baseButton-primaryFormSubmit"] * {
-            color: #FFFFFF !important;
-        }
-
         #MainMenu, footer { visibility:hidden; }
 
         @media (max-width: 900px) {
@@ -809,6 +761,43 @@ def get_user_id_email():
     if not user:
         return None, ""
     return getattr(user, "id", None), getattr(user, "email", "")
+
+
+def sincronizar_sesion_supabase():
+    """Restaura la sesion autenticada en el cliente de Supabase para que auth.uid() funcione en RLS."""
+    access_token = st.session_state.get("bradafin_access_token")
+    refresh_token = st.session_state.get("bradafin_refresh_token")
+    if not access_token or not refresh_token:
+        return False
+    try:
+        res = supabase.auth.set_session(access_token, refresh_token)
+        session = getattr(res, "session", None)
+        user = getattr(res, "user", None)
+        if session:
+            st.session_state["bradafin_access_token"] = getattr(session, "access_token", access_token)
+            st.session_state["bradafin_refresh_token"] = getattr(session, "refresh_token", refresh_token)
+        if user:
+            st.session_state.user = user
+        return True
+    except Exception:
+        try:
+            res = supabase.auth.refresh_session(refresh_token)
+            session = getattr(res, "session", None)
+            user = getattr(res, "user", None)
+            if session:
+                st.session_state["bradafin_access_token"] = getattr(session, "access_token", access_token)
+                st.session_state["bradafin_refresh_token"] = getattr(session, "refresh_token", refresh_token)
+            if user:
+                st.session_state.user = user
+            return bool(session)
+        except Exception:
+            return False
+
+
+def limpiar_sesion_local():
+    st.session_state.user = None
+    st.session_state.pop("bradafin_access_token", None)
+    st.session_state.pop("bradafin_refresh_token", None)
 
 
 def upsert_safe(tabla, payload, on_conflict=None):
@@ -1085,6 +1074,7 @@ def render_auth():
                         if getattr(res, "session", None):
                             st.session_state["bradafin_access_token"] = getattr(res.session, "access_token", None)
                             st.session_state["bradafin_refresh_token"] = getattr(res.session, "refresh_token", None)
+                            sincronizar_sesion_supabase()
                         st.rerun()
                     except Exception as e:
                         st.error(f"No pude iniciar sesión: {e}")
@@ -2067,16 +2057,15 @@ def render_perfil(negocio, user_id):
             supabase.auth.sign_out()
         except Exception:
             pass
-        st.session_state.user = None
+        limpiar_sesion_local()
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
 
 def render_sidebar_onboarding(email):
-    """Mantiene el sidebar visible durante la configuración inicial.
-    También muestra el menú completo como vista previa desactivada, para que el usuario entienda
-    que esos módulos se activan al crear el negocio.
+    """Mantiene contenido en el sidebar durante la configuracion inicial.
+    Sin contenido de sidebar, Streamlit puede ocultar el boton hamburguesa.
     """
     with st.sidebar:
         if LOGO_PATH:
@@ -2088,15 +2077,6 @@ def render_sidebar_onboarding(email):
         st.caption("Crea el negocio para activar el panel completo: caja, ventas, clientes, inventario, reportes y alertas.")
         if email:
             st.caption(email)
-        st.divider()
-
-        st.markdown("**Menú BradaFin**")
-        st.caption("Se activa después de crear el negocio.")
-        paginas_preview = ["Inicio", "Caja diaria", "Ventas y gastos", "Clientes", "Proveedores", "Cuentas", "Inventario", "Reportes", "Alertas", "BradaFin IA", "Perfil"]
-        iconos = {"Inicio":"🏠", "Caja diaria":"💵", "Ventas y gastos":"🧾", "Clientes":"👥", "Proveedores":"🚚", "Cuentas":"📌", "Inventario":"📦", "Reportes":"📊", "Alertas":"🔔", "BradaFin IA":"🤖", "Perfil":"⚙️"}
-        for p in paginas_preview:
-            st.button(f"{iconos.get(p,'•')} {p}", key=f"onboarding_nav_{p}", use_container_width=True, disabled=True)
-
         st.divider()
         if st.button("Cerrar sesión", use_container_width=True):
             try:
@@ -2123,6 +2103,9 @@ def main():
     if not user_id:
         st.error("No pude identificar el usuario activo.")
         st.stop()
+    sesion_ok = sincronizar_sesion_supabase()
+    if not sesion_ok:
+        st.warning("Tu sesión no está sincronizada con Supabase. Cierra sesión y vuelve a entrar para guardar datos correctamente.")
     negocio = obtener_negocio(user_id)
     if not negocio:
         render_sidebar_onboarding(email)
