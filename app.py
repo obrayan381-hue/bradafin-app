@@ -4629,6 +4629,48 @@ def render_comprobantes(negocio, user_id, df_clientes, df_productos, df_comproba
             for _, r in df_clientes.iterrows():
                 clientes_map[str(r["id"])] = f"{r.get('nombre','')} · {r.get('documento','')}"
 
+            # Cantidad de líneas y lector rápido quedan fuera del form para que la pistola
+            # pueda escribir el código, hacer Enter y recargar la selección automáticamente.
+            num_items = int(st.number_input("Cantidad de líneas", min_value=1, max_value=8, value=1, step=1, key="comp_num_items"))
+
+            productos_activos_scan = df_productos[df_productos["activo"] == True].copy() if isinstance(df_productos, pd.DataFrame) and not df_productos.empty and "activo" in df_productos.columns else pd.DataFrame()
+            if st.session_state.get("comp_scan_linea") not in list(range(num_items)):
+                st.session_state["comp_scan_linea"] = 0
+            st.markdown("**Lector rápido para comprobante**")
+            scan_c1, scan_c2 = st.columns([.42, 1.25])
+            with scan_c1:
+                linea_scan = st.selectbox(
+                    "Línea destino",
+                    list(range(num_items)),
+                    format_func=lambda x: f"Línea {x + 1}",
+                    key="comp_scan_linea",
+                    help="Escoge en qué línea del comprobante quieres cargar el producto escaneado."
+                )
+            with scan_c2:
+                codigo_scan = st.text_input(
+                    "Escanear código / lector",
+                    placeholder="Haz clic aquí, escanea con la pistola y BradaFin carga el producto",
+                    key="comp_scan_codigo",
+                    help="La pistola USB/Bluetooth funciona como teclado: escribe el código y normalmente presiona Enter."
+                )
+            codigo_scan_norm = normalizar_codigo_producto(codigo_scan)
+            producto_scan = buscar_producto_por_codigo(productos_activos_scan, codigo_scan_norm)
+            scan_marker = f"{linea_scan}|{codigo_scan_norm}"
+            if codigo_scan_norm:
+                if producto_scan:
+                    if st.session_state.get("comp_scan_ultimo_aplicado") != scan_marker:
+                        st.session_state[f"comp_prod_{linea_scan}"] = str(producto_scan.get("id", ""))
+                        st.session_state["comp_scan_ultimo_aplicado"] = scan_marker
+                    st.success(
+                        f"Producto cargado en Línea {linea_scan + 1}: "
+                        f"{producto_scan.get('nombre','Producto')} · "
+                        f"precio {money(producto_scan.get('precio_venta', 0))} · "
+                        f"stock {float(producto_scan.get('stock', 0) or 0):g}"
+                    )
+                else:
+                    st.warning("No encontré un producto activo con ese código. Puedes registrarlo en Inventario o usar ítem manual.")
+            st.caption("Tip: el precio unitario se trae del producto registrado y queda editable para descuentos o ajustes de esa venta.")
+
             with st.form("comprobante_form", clear_on_submit=True):
                 c1, c2, c3 = st.columns([1, .85, .85])
                 with c1:
@@ -4636,7 +4678,7 @@ def render_comprobantes(negocio, user_id, df_clientes, df_productos, df_comproba
                 with c2:
                     metodo = st.selectbox("Método de pago", METODOS_PAGO, key="comp_metodo")
                 with c3:
-                    num_items = st.number_input("Cantidad de líneas", min_value=1, max_value=8, value=1, step=1)
+                    st.markdown(f"<div class='pill pill-green'>Líneas activas: {num_items}</div>", unsafe_allow_html=True)
 
                 cliente_id = st.selectbox("Cliente", list(clientes_map.keys()), format_func=lambda x: clientes_map.get(x, x), key="comp_cliente")
                 cliente_obj = {}
@@ -4666,9 +4708,18 @@ def render_comprobantes(negocio, user_id, df_clientes, df_productos, df_comproba
                 subtotal_preview = 0.0
                 for i in range(int(num_items)):
                     st.markdown(f"<div class='muted'><b>Línea {i+1}</b></div>", unsafe_allow_html=True)
+                    prod_key = f"comp_prod_{i}"
+                    if st.session_state.get(prod_key) not in opciones_prod:
+                        st.session_state[prod_key] = ""
                     c1, c2, c3 = st.columns([1.35, .45, .65])
                     with c1:
-                        prod_id = st.selectbox("Producto", list(opciones_prod.keys()), format_func=lambda x: opciones_prod.get(x, x), key=f"comp_prod_{i}")
+                        prod_id = st.selectbox(
+                            "Producto",
+                            list(opciones_prod.keys()),
+                            format_func=lambda x: opciones_prod.get(x, x),
+                            key=prod_key,
+                            help="Puede seleccionarlo manualmente o cargarlo con el lector rápido de arriba."
+                        )
                     prod = {}
                     if prod_id:
                         try:
@@ -4679,12 +4730,25 @@ def render_comprobantes(negocio, user_id, df_clientes, df_productos, df_comproba
                         qty = st.number_input("Cant.", min_value=0.0, step=1.0, value=1.0, key=f"comp_qty_{i}")
                     with c3:
                         precio_default = float(prod.get("precio_venta", 0) or 0) if prod else 0.0
-                        precio = st.number_input("Precio unit.", min_value=0.0, step=1000.0, value=precio_default, key=f"comp_precio_{i}")
+                        precio_key = f"comp_precio_{i}_{prod_id or 'manual'}"
+                        precio = st.number_input(
+                            "Precio unit.",
+                            min_value=0.0,
+                            step=1000.0,
+                            value=precio_default,
+                            key=precio_key,
+                            help="BradaFin trae el precio de venta registrado, pero puedes editarlo para esta venta."
+                        )
 
                     if prod_id:
                         nombre_item = str(prod.get("nombre", "") or "")
                         codigo_item = str(prod.get("codigo", "") or "")
                         costo_item = float(prod.get("costo_unitario", 0) or 0)
+                        st.caption(
+                            f"Producto registrado: {codigo_item} · {nombre_item} · "
+                            f"precio base {money(prod.get('precio_venta', 0))} · "
+                            f"stock {float(prod.get('stock', 0) or 0):g}. El precio unitario queda editable."
+                        )
                     else:
                         c4, c5 = st.columns([1.1, .7])
                         with c4:
