@@ -316,7 +316,9 @@ def aplicar_estilo_bradafin():
         /* =================================================== */
         .stButton > button,
         .stDownloadButton > button,
-        button[data-testid="baseButton-secondary"] {
+        .stFormSubmitButton > button,
+        button[data-testid="baseButton-secondary"],
+        button[data-testid="baseButton-primaryFormSubmit"] {
             border-radius: 18px !important;
             min-height: 50px !important;
             font-weight: 950 !important;
@@ -332,7 +334,9 @@ def aplicar_estilo_bradafin():
 
         .stButton > button:hover,
         .stDownloadButton > button:hover,
-        button[data-testid="baseButton-secondary"]:hover {
+        .stFormSubmitButton > button:hover,
+        button[data-testid="baseButton-secondary"]:hover,
+        button[data-testid="baseButton-primaryFormSubmit"]:hover {
             transform: translateY(-1px) !important;
             color: var(--text) !important;
             background:
@@ -343,7 +347,9 @@ def aplicar_estilo_bradafin():
 
         .stButton > button[kind="primary"],
         .stDownloadButton > button[kind="primary"],
-        button[data-testid="baseButton-primary"] {
+        .stFormSubmitButton > button,
+        button[data-testid="baseButton-primary"],
+        button[data-testid="baseButton-primaryFormSubmit"] {
             background: linear-gradient(135deg, #102019 0%, #14513D 35%, #1F6B4F 70%, #D4A017 100%) !important;
             color: white !important;
             border: none !important;
@@ -352,13 +358,17 @@ def aplicar_estilo_bradafin():
 
         .stButton > button[kind="primary"] *,
         .stDownloadButton > button[kind="primary"] *,
-        button[data-testid="baseButton-primary"] * {
+        .stFormSubmitButton > button *,
+        button[data-testid="baseButton-primary"] *,
+        button[data-testid="baseButton-primaryFormSubmit"] * {
             color: white !important;
         }
 
         .stButton > button[kind="primary"]:hover,
         .stDownloadButton > button[kind="primary"]:hover,
-        button[data-testid="baseButton-primary"]:hover {
+        .stFormSubmitButton > button:hover,
+        button[data-testid="baseButton-primary"]:hover,
+        button[data-testid="baseButton-primaryFormSubmit"]:hover {
             filter: brightness(1.04) saturate(1.05) !important;
             box-shadow: 0 22px 40px rgba(31,107,79,.30) !important;
         }
@@ -643,6 +653,44 @@ def aplicar_estilo_bradafin():
             color: #102019 !important;
             fill: #102019 !important;
             stroke: #102019 !important;
+        }
+
+
+
+        /* Botones del sidebar visibles aun cuando esten desactivados en configuracion inicial */
+        section[data-testid="stSidebar"] .stButton > button:disabled,
+        section[data-testid="stSidebar"] button:disabled {
+            opacity: .88 !important;
+            cursor: not-allowed !important;
+            background:
+                linear-gradient(180deg, #FFFFFF 0%, #F7FAF3 100%) padding-box,
+                linear-gradient(135deg, rgba(31,107,79,.45), rgba(212,160,23,.55)) border-box !important;
+            color: #14513D !important;
+            border: 1px solid rgba(31,107,79,.16) !important;
+            box-shadow: 0 8px 16px rgba(16,32,25,.055) !important;
+        }
+
+        section[data-testid="stSidebar"] .stButton > button:disabled *,
+        section[data-testid="stSidebar"] button:disabled * {
+            color: #14513D !important;
+            opacity: 1 !important;
+        }
+
+        /* En formularios, evita que Streamlit vuelva a poner botones rojos por defecto */
+        .stFormSubmitButton > button,
+        button[data-testid="baseButton-primaryFormSubmit"] {
+            background: linear-gradient(135deg, #102019 0%, #14513D 35%, #1F6B4F 70%, #D4A017 100%) !important;
+            color: #FFFFFF !important;
+            border: none !important;
+            border-radius: 18px !important;
+            min-height: 50px !important;
+            font-weight: 950 !important;
+            box-shadow: 0 18px 34px rgba(31,107,79,.26) !important;
+        }
+
+        .stFormSubmitButton > button *,
+        button[data-testid="baseButton-primaryFormSubmit"] * {
+            color: #FFFFFF !important;
         }
 
         #MainMenu, footer { visibility:hidden; }
@@ -2026,8 +2074,9 @@ def render_perfil(negocio, user_id):
 
 
 def render_sidebar_onboarding(email):
-    """Mantiene contenido en el sidebar durante la configuracion inicial.
-    Sin contenido de sidebar, Streamlit puede ocultar el boton hamburguesa.
+    """Mantiene el sidebar visible durante la configuración inicial.
+    También muestra el menú completo como vista previa desactivada, para que el usuario entienda
+    que esos módulos se activan al crear el negocio.
     """
     with st.sidebar:
         if LOGO_PATH:
@@ -2039,6 +2088,15 @@ def render_sidebar_onboarding(email):
         st.caption("Crea el negocio para activar el panel completo: caja, ventas, clientes, inventario, reportes y alertas.")
         if email:
             st.caption(email)
+        st.divider()
+
+        st.markdown("**Menú BradaFin**")
+        st.caption("Se activa después de crear el negocio.")
+        paginas_preview = ["Inicio", "Caja diaria", "Ventas y gastos", "Clientes", "Proveedores", "Cuentas", "Inventario", "Reportes", "Alertas", "BradaFin IA", "Perfil"]
+        iconos = {"Inicio":"🏠", "Caja diaria":"💵", "Ventas y gastos":"🧾", "Clientes":"👥", "Proveedores":"🚚", "Cuentas":"📌", "Inventario":"📦", "Reportes":"📊", "Alertas":"🔔", "BradaFin IA":"🤖", "Perfil":"⚙️"}
+        for p in paginas_preview:
+            st.button(f"{iconos.get(p,'•')} {p}", key=f"onboarding_nav_{p}", use_container_width=True, disabled=True)
+
         st.divider()
         if st.button("Cerrar sesión", use_container_width=True):
             try:
