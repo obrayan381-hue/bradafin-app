@@ -1,0 +1,9 @@
+streamlit
+pandas
+plotly
+supabase
+openai
+reportlab
+openpyxl
+python-barcode
+pillow
