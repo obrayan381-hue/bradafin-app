@@ -36,9 +36,24 @@ except Exception:
 # Streamlit + Supabase + Gemini/OpenAI compatible
 # ============================================================
 
+BRADAFIN_LOGO_FULL_PATHS = [
+    Path("bradafin_logo_horizontal.png"),
+    Path("bradafin_logo_completo.png"),
+    Path("bradafin_logo.png"),
+    Path("logo_bradafin.png"),
+]
+BRADAFIN_ICON_PATHS = [
+    Path("bradafin_icono.png"),
+    Path("icono_bradafin.png"),
+    Path("bradafin_isotipo.png"),
+]
+BRADAFIN_LOGO_FULL_PATH = next((p for p in BRADAFIN_LOGO_FULL_PATHS if p.exists()), None)
+BRADAFIN_ICON_PATH = next((p for p in BRADAFIN_ICON_PATHS if p.exists()), None)
+APP_PAGE_ICON = str(BRADAFIN_ICON_PATH) if BRADAFIN_ICON_PATH else "💼"
+
 st.set_page_config(
     page_title="BradaFin",
-    page_icon="💼",
+    page_icon=APP_PAGE_ICON,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -61,8 +76,26 @@ TIPOS_CUENTA = ["Por cobrar", "Por pagar"]
 ESTADOS_CUENTA = ["pendiente", "abonada", "vencida", "pagada"]
 METODOS_PAGO = ["Efectivo", "Transferencia", "Nequi", "Daviplata", "Tarjeta", "Crédito", "Otro"]
 
-LOGO_PATHS = [Path("logo_bradafin.png"), Path("bradafin_logo.png"), Path("icono_bradafin.png")]
-LOGO_PATH = next((p for p in LOGO_PATHS if p.exists()), None)
+def render_logo_header(width_full=300, width_icon=82, show_name_fallback=True):
+    if BRADAFIN_LOGO_FULL_PATH:
+        st.image(str(BRADAFIN_LOGO_FULL_PATH), width=width_full)
+    elif BRADAFIN_ICON_PATH:
+        st.image(str(BRADAFIN_ICON_PATH), width=width_icon)
+        if show_name_fallback:
+            st.markdown("### BradaFin")
+    elif show_name_fallback:
+        st.markdown("### BradaFin")
+
+
+def render_logo_sidebar(width_full=190, width_icon=70, show_name_fallback=True):
+    if BRADAFIN_LOGO_FULL_PATH:
+        st.image(str(BRADAFIN_LOGO_FULL_PATH), width=width_full)
+    elif BRADAFIN_ICON_PATH:
+        st.image(str(BRADAFIN_ICON_PATH), width=width_icon)
+        if show_name_fallback:
+            st.markdown("### BradaFin")
+    elif show_name_fallback:
+        st.markdown("### BradaFin")
 
 # ============================================================
 # CONFIG
@@ -1308,8 +1341,7 @@ def obtener_cajas(negocio_id):
 def render_auth():
     col_left, col_right = st.columns([1.05, .95], gap="large")
     with col_left:
-        if LOGO_PATH:
-            st.image(str(LOGO_PATH), width=110)
+        render_logo_header(width_full=340, width_icon=96, show_name_fallback=False)
         st.markdown(
             f"""
             <div class='hero-card'>
@@ -2405,9 +2437,7 @@ def render_sidebar_onboarding(email):
     Sin contenido de sidebar, Streamlit puede ocultar el boton hamburguesa.
     """
     with st.sidebar:
-        if LOGO_PATH:
-            st.image(str(LOGO_PATH), width=88)
-        st.markdown("### BradaFin")
+        render_logo_sidebar(width_full=200, width_icon=74, show_name_fallback=not bool(BRADAFIN_LOGO_FULL_PATH))
         st.caption(APP_TAGLINE)
         st.divider()
         st.markdown("**Configuración inicial**")
@@ -2458,9 +2488,7 @@ def main():
     df_cajas = obtener_cajas(negocio_id)
 
     with st.sidebar:
-        if LOGO_PATH:
-            st.image(str(LOGO_PATH), width=88)
-        st.markdown("### BradaFin")
+        render_logo_sidebar(width_full=200, width_icon=74, show_name_fallback=not bool(BRADAFIN_LOGO_FULL_PATH))
         st.caption(APP_TAGLINE)
         st.markdown(f"**{safe(negocio.get('nombre','Negocio'))}**", unsafe_allow_html=True)
         st.caption(email)
