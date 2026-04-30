@@ -1417,6 +1417,23 @@ def generar_codigo_producto(negocio_id, df_productos):
     return f"BRF-{prefix}-{n:06d}"
 
 
+def normalizar_codigo_producto(codigo):
+    """Limpia lo que llega desde lector/pistola de código de barras o escritura manual."""
+    return re.sub(r"[\s\r\n\t]+", "", str(codigo or "").strip())
+
+
+def buscar_producto_por_codigo(df_productos, codigo):
+    codigo_norm = normalizar_codigo_producto(codigo).lower()
+    if df_productos is None or df_productos.empty or not codigo_norm:
+        return None
+    tmp = df_productos.copy()
+    tmp["_codigo_norm"] = tmp["codigo"].fillna("").astype(str).map(lambda x: normalizar_codigo_producto(x).lower())
+    match = tmp[tmp["_codigo_norm"] == codigo_norm]
+    if match.empty:
+        return None
+    return match.iloc[0].to_dict()
+
+
 def crear_producto(negocio_id, user_id, codigo, nombre, categoria, costo, precio, stock, stock_min):
     payload = {
         "negocio_id": negocio_id,
@@ -1815,10 +1832,26 @@ def render_inventario(negocio, user_id, df_productos, df_movs):
     col1,col2 = st.columns([.9,1.1], gap="large")
     with col1:
         st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
-        section_header("Crear producto", "Si no tiene código de barras, BradaFin genera uno interno.")
+        section_header("Crear producto", "Escanee el código si el producto ya lo trae. Si no tiene código, BradaFin genera uno interno.")
         with st.form("producto_form", clear_on_submit=True):
-            auto = st.checkbox("Generar código automático", value=True)
-            codigo = st.text_input("Código / código de barras", disabled=auto)
+            modo_codigo = st.radio(
+                "Código del producto",
+                ["Escanear / escribir código existente", "Generar código interno BradaFin"],
+                index=0,
+                horizontal=False,
+                help="La pistola lectora funciona como teclado: haga clic en el campo de código y escanee."
+            )
+            auto = modo_codigo == "Generar código interno BradaFin"
+            if auto:
+                st.info("BradaFin generará un código interno para productos que no tienen código de barras comercial.")
+                codigo = ""
+            else:
+                codigo = st.text_input(
+                    "Código de barras existente",
+                    placeholder="Haz clic aquí y escanea con la pistola, o escribe el código",
+                    key="producto_codigo_barras_scan"
+                )
+                st.caption("Tip: si usas pistola USB/Bluetooth, este campo recibe el código como si fuera teclado. Luego completa nombre, costo, precio y stock.")
             nombre = st.text_input("Nombre del producto")
             categoria = st.text_input("Categoría", value="General")
             c1,c2 = st.columns(2)
@@ -1829,8 +1862,14 @@ def render_inventario(negocio, user_id, df_productos, df_movs):
             with c4: stock_min = st.number_input("Stock mínimo", min_value=0.0, step=1.0)
             submit = st.form_submit_button("Guardar producto", type="primary", use_container_width=True)
         if submit:
-            final_codigo = generar_codigo_producto(negocio_id, df_productos) if auto else codigo.strip()
-            if not nombre.strip(): st.error("Escribe el nombre del producto.")
+            final_codigo = generar_codigo_producto(negocio_id, df_productos) if auto else normalizar_codigo_producto(codigo)
+            producto_existente = buscar_producto_por_codigo(df_productos, final_codigo)
+            if not nombre.strip():
+                st.error("Escribe el nombre del producto.")
+            elif not final_codigo:
+                st.error("Escanea o escribe el código de barras. Si el producto no tiene código, selecciona 'Generar código interno BradaFin'.")
+            elif producto_existente:
+                st.error(f"Ya existe un producto con ese código: {producto_existente.get('nombre', 'Producto')} ({producto_existente.get('codigo', final_codigo)}).")
             else:
                 ok,res = crear_producto(negocio_id, user_id, final_codigo, nombre, categoria, costo, precio, stock, stock_min)
                 st.success(f"Producto guardado con código {final_codigo}.") if ok else st.error(f"No pude guardar: {res}")
@@ -1842,6 +1881,17 @@ def render_inventario(negocio, user_id, df_productos, df_movs):
         if df_productos.empty:
             st.info("Aún no hay productos.")
         else:
+            buscador_codigo = st.text_input(
+                "Buscar producto por código / lector",
+                placeholder="Escanea aquí para encontrar un producto ya registrado",
+                key="buscar_producto_codigo_scan"
+            )
+            producto_encontrado = buscar_producto_por_codigo(df_productos, buscador_codigo)
+            if buscador_codigo:
+                if producto_encontrado:
+                    st.success(f"Encontrado: {producto_encontrado.get('nombre')} · stock {producto_encontrado.get('stock')} · precio {money(producto_encontrado.get('precio_venta', 0))}")
+                else:
+                    st.warning("No encontré un producto con ese código. Puedes registrarlo en el formulario de la izquierda.")
             dfp = df_productos.copy()
             dfp["margen_$"] = dfp["precio_venta"] - dfp["costo_unitario"]
             dfp["margen_%"] = dfp.apply(lambda r: (r["precio_venta"] - r["costo_unitario"]) / r["precio_venta"] if r["precio_venta"] else 0, axis=1)
