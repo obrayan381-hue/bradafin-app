@@ -1696,19 +1696,464 @@ def mensaje_cobro(negocio, cuenta):
     )
 
 
-def exportar_excel(df, filename="bradafin_export.xlsx"):
+def exportar_excel(df, filename="bradafin_export.xlsx", negocio=None, periodo=None, fecha_base=None, metricas=None, df_cuentas=None, df_productos=None):
     buffer = io.BytesIO()
     out = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
-    for col in out.columns:
-        if pd.api.types.is_datetime64_any_dtype(out[col]):
-            out[col] = out[col].dt.strftime("%Y-%m-%d")
+    periodo = periodo or "Reporte"
+    fecha_base = fecha_base or date.today()
+    negocio = negocio or {}
+    metricas = metricas or {}
+
+    def get_metric(name, default=0):
+        try:
+            return float(metricas.get(name, default) or 0)
+        except Exception:
+            return float(default)
+
+    def clean_datetime_columns(data):
+        data = data.copy() if isinstance(data, pd.DataFrame) else pd.DataFrame()
+        for col in data.columns:
+            try:
+                if pd.api.types.is_datetime64_any_dtype(data[col]):
+                    data[col] = pd.to_datetime(data[col], errors="coerce")
+                    try:
+                        data[col] = data[col].dt.tz_localize(None)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return data
+
+    def user_movimientos(data):
+        data = clean_datetime_columns(data)
+        rename = {
+            "fecha": "Fecha",
+            "tipo": "Tipo",
+            "categoria": "Categoría",
+            "monto": "Monto",
+            "metodo_pago": "Método de pago",
+            "descripcion": "Descripción",
+            "cantidad": "Cantidad",
+            "costo_unitario": "Costo unitario",
+            "precio_unitario": "Precio unitario",
+            "creado_en": "Registrado",
+        }
+        cols = [c for c in ["fecha","tipo","categoria","monto","metodo_pago","descripcion","cantidad","costo_unitario","precio_unitario","creado_en"] if c in data.columns]
+        if not cols:
+            return pd.DataFrame(columns=list(rename.values())[:6])
+        mov = data[cols].rename(columns=rename)
+        for col in ["Monto", "Cantidad", "Costo unitario", "Precio unitario"]:
+            if col in mov.columns:
+                mov[col] = pd.to_numeric(mov[col], errors="coerce").fillna(0)
+        return mov
+
+    def user_cartera(data):
+        data = clean_datetime_columns(data)
+        if data is None or data.empty:
+            return pd.DataFrame(columns=["Tipo", "Tercero", "Documento", "Teléfono", "Concepto", "Monto total", "Saldo pendiente", "Fecha", "Vencimiento", "Estado"])
+        rename = {
+            "tipo": "Tipo",
+            "tercero_nombre": "Tercero",
+            "documento": "Documento",
+            "telefono": "Teléfono",
+            "concepto": "Concepto",
+            "monto_total": "Monto total",
+            "saldo_pendiente": "Saldo pendiente",
+            "fecha": "Fecha",
+            "fecha_vencimiento": "Vencimiento",
+            "estado": "Estado",
+            "observaciones": "Observaciones",
+        }
+        cols = [c for c in rename.keys() if c in data.columns]
+        cartera = data[cols].rename(columns=rename)
+        for col in ["Monto total", "Saldo pendiente"]:
+            if col in cartera.columns:
+                cartera[col] = pd.to_numeric(cartera[col], errors="coerce").fillna(0)
+        return cartera
+
+    def user_inventario(productos, movimientos):
+        productos = clean_datetime_columns(productos)
+        if productos is None or productos.empty:
+            return pd.DataFrame(columns=["Código", "Producto", "Categoría", "Costo unitario", "Precio venta", "Margen $", "Margen %", "Stock", "Stock mínimo", "Rotación periodo", "Activo"])
+        prod = productos.copy()
+        for col in ["costo_unitario", "precio_venta", "stock", "stock_minimo"]:
+            if col in prod.columns:
+                prod[col] = pd.to_numeric(prod[col], errors="coerce").fillna(0)
+        if "precio_venta" in prod.columns and "costo_unitario" in prod.columns:
+            prod["margen_$"] = prod["precio_venta"] - prod["costo_unitario"]
+            prod["margen_%"] = prod.apply(lambda r: (r.get("precio_venta", 0) - r.get("costo_unitario", 0)) / r.get("precio_venta", 1) if r.get("precio_venta", 0) else 0, axis=1)
+        else:
+            prod["margen_$"] = 0
+            prod["margen_%"] = 0
+        rot = {}
+        try:
+            movs = movimientos.copy() if isinstance(movimientos, pd.DataFrame) else pd.DataFrame()
+            if not movs.empty and "producto_id" in movs.columns and "cantidad" in movs.columns and "tipo" in movs.columns:
+                ventas = movs[movs["tipo"] == "Venta"].copy()
+                ventas["cantidad"] = pd.to_numeric(ventas["cantidad"], errors="coerce").fillna(0)
+                rot = ventas.groupby("producto_id")["cantidad"].sum().to_dict()
+        except Exception:
+            rot = {}
+        prod["rotación_periodo"] = prod["id"].map(rot).fillna(0) if "id" in prod.columns else 0
+        rename = {
+            "codigo": "Código",
+            "nombre": "Producto",
+            "categoria": "Categoría",
+            "costo_unitario": "Costo unitario",
+            "precio_venta": "Precio venta",
+            "margen_$": "Margen $",
+            "margen_%": "Margen %",
+            "stock": "Stock",
+            "stock_minimo": "Stock mínimo",
+            "rotación_periodo": "Rotación periodo",
+            "activo": "Activo",
+        }
+        cols = [c for c in rename.keys() if c in prod.columns]
+        inv = prod[cols].rename(columns=rename)
+        return inv
+
     try:
+        from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.table import Table as XLTable, TableStyleInfo
+        from openpyxl.chart import BarChart, Reference
+        from openpyxl.formatting.rule import CellIsRule
+        from openpyxl.drawing.image import Image as XLImage
+
+        movimientos = user_movimientos(out)
+        cartera = user_cartera(df_cuentas if isinstance(df_cuentas, pd.DataFrame) else pd.DataFrame())
+        inventario = user_inventario(df_productos if isinstance(df_productos, pd.DataFrame) else pd.DataFrame(), out)
+
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            out.to_excel(writer, index=False, sheet_name="datos")
+            movimientos.to_excel(writer, index=False, sheet_name="Movimientos")
+            inventario.to_excel(writer, index=False, sheet_name="Inventario")
+            cartera.to_excel(writer, index=False, sheet_name="Cartera")
+            wb = writer.book
+            ws = wb.create_sheet("Resumen", 0)
+
+            verde_oscuro = "102019"
+            verde = "14513D"
+            verde_medio = "1F6B4F"
+            dorado = "D4A017"
+            dorado_suave = "FFF4CF"
+            crema = "FFFCF3"
+            crema2 = "F6FAF4"
+            texto = "102019"
+            muted = "52675C"
+            rojo = "C2410C"
+            linea = "DDE8DF"
+
+            thin = Side(style="thin", color=linea)
+            gold_side = Side(style="thin", color=dorado)
+            no_border = Border()
+            soft_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            dark_fill = PatternFill("solid", fgColor=verde_oscuro)
+            green_fill = PatternFill("solid", fgColor=verde)
+            gold_fill = PatternFill("solid", fgColor=dorado)
+            pale_gold_fill = PatternFill("solid", fgColor=dorado_suave)
+            pale_green_fill = PatternFill("solid", fgColor=crema2)
+            white_fill = PatternFill("solid", fgColor="FFFFFF")
+            red_fill = PatternFill("solid", fgColor="FFF1E8")
+            money_fmt = '$ #,##0'
+            pct_fmt = '0.0%'
+            date_fmt = 'yyyy-mm-dd'
+
+            for sheet in wb.worksheets:
+                sheet.sheet_view.showGridLines = False
+
+            ws.title = "Resumen"
+            ws.sheet_properties.tabColor = verde
+            for col in range(1, 10):
+                ws.column_dimensions[get_column_letter(col)].width = [16, 17, 16, 17, 16, 17, 16, 17, 3][col-1]
+            for row in range(1, 40):
+                ws.row_dimensions[row].height = 22
+
+            ws.merge_cells("A1:H1")
+            ws["A1"] = "BradaFin · Reporte empresarial"
+            ws["A1"].fill = dark_fill
+            ws["A1"].font = Font(color="FFFFFF", bold=True, size=16)
+            ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[1].height = 30
+
+            logo_inserted = False
+            try:
+                logo_path = None
+                if BRADAFIN_LOGO_FULL_PATH and Path(BRADAFIN_LOGO_FULL_PATH).exists():
+                    logo_path = BRADAFIN_LOGO_FULL_PATH
+                elif BRADAFIN_ICON_PATH and Path(BRADAFIN_ICON_PATH).exists():
+                    logo_path = BRADAFIN_ICON_PATH
+                if logo_path:
+                    img = XLImage(str(logo_path))
+                    img.width = 185
+                    img.height = 58
+                    ws.add_image(img, "A2")
+                    logo_inserted = True
+            except Exception:
+                logo_inserted = False
+
+            if not logo_inserted:
+                ws.merge_cells("A2:B4")
+                ws["A2"] = "BradaFin"
+                ws["A2"].font = Font(color=verde, bold=True, size=23)
+                ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
+
+            ws.merge_cells("C2:H2")
+            ws["C2"] = "Reporte premium de movimientos"
+            ws["C2"].font = Font(color=texto, bold=True, size=20)
+            ws["C2"].alignment = Alignment(horizontal="right", vertical="center")
+
+            ws.merge_cells("C3:H3")
+            negocio_nombre = negocio.get("nombre", "Negocio") if isinstance(negocio, dict) else "Negocio"
+            ws["C3"] = f"{negocio_nombre} · {periodo} · {pd.Timestamp(fecha_base).strftime('%Y-%m-%d')}"
+            ws["C3"].font = Font(color=muted, size=10)
+            ws["C3"].alignment = Alignment(horizontal="right", vertical="center")
+
+            ws.merge_cells("A5:H5")
+            ws["A5"] = "Resumen ejecutivo"
+            ws["A5"].font = Font(color=verde, bold=True, size=13)
+            ws["A5"].alignment = Alignment(horizontal="left", vertical="center")
+            ws["A5"].border = Border(bottom=gold_side)
+
+            def set_card(cell_range, label, value, tone="green", num_format=money_fmt):
+                start, end = cell_range.split(":")
+                start_cell = ws[start]
+                ws.merge_cells(cell_range)
+                start_cell.value = f"{label}\n{value if isinstance(value, str) else ''}"
+                start_cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                start_cell.border = soft_border
+                start_cell.fill = pale_green_fill if tone == "green" else pale_gold_fill if tone == "gold" else red_fill if tone == "red" else white_fill
+                start_cell.font = Font(color=texto, bold=True, size=10)
+                if not isinstance(value, str):
+                    value_cell = ws.cell(row=start_cell.row + 1, column=start_cell.column)
+                    value_cell.value = value
+                    value_cell.number_format = num_format
+                    value_cell.font = Font(color=verde if tone == "green" else rojo if tone == "red" else texto, bold=True, size=15)
+                    value_cell.alignment = Alignment(horizontal="left", vertical="center")
+
+            ventas = get_metric("ventas")
+            gastos = get_metric("gastos")
+            utilidad = get_metric("utilidad_estimada")
+            margen = get_metric("margen")
+            cxc = get_metric("cxc")
+            cxp = get_metric("cxp")
+            inventario_capital = get_metric("capital_inventario")
+            stock_bajo = get_metric("stock_bajo")
+            costo_ventas = get_metric("costo_ventas")
+
+            set_card("A6:B8", "VENTAS", ventas, "green", money_fmt)
+            set_card("C6:D8", "GASTOS", gastos, "red" if gastos > 0 else "gold", money_fmt)
+            set_card("E6:F8", "UTILIDAD EST.", utilidad, "green" if utilidad >= 0 else "red", money_fmt)
+            set_card("G6:H8", "MARGEN BRUTO", margen, "green" if margen >= 0 else "red", pct_fmt)
+            set_card("A10:B12", "CARTERA POR COBRAR", cxc, "red" if cxc > 0 else "green", money_fmt)
+            set_card("C10:D12", "CUENTAS POR PAGAR", cxp, "red" if cxp > 0 else "green", money_fmt)
+            set_card("E10:F12", "INVENTARIO CAPITAL", inventario_capital, "gold", money_fmt)
+            set_card("G10:H12", "STOCK BAJO", stock_bajo, "red" if stock_bajo > 0 else "green", "0")
+
+            for row in [6, 10]:
+                ws.row_dimensions[row].height = 25
+                ws.row_dimensions[row + 1].height = 22
+                ws.row_dimensions[row + 2].height = 12
+
+            ws.merge_cells("A14:H14")
+            ws["A14"] = "Lectura rápida"
+            ws["A14"].fill = green_fill
+            ws["A14"].font = Font(color="FFFFFF", bold=True, size=12)
+            ws["A14"].alignment = Alignment(horizontal="left", vertical="center")
+            ws.row_dimensions[14].height = 24
+
+            lectura = []
+            if ventas <= 0:
+                lectura.append("Aún no hay ventas registradas en este periodo.")
+            elif utilidad >= 0:
+                lectura.append("El periodo muestra utilidad estimada positiva.")
+            else:
+                lectura.append("El periodo muestra utilidad estimada negativa; revise costos, gastos y precios.")
+            if ventas > 0:
+                if margen >= float(negocio.get("margen_objetivo", 0.30) or 0.30):
+                    lectura.append(f"Margen bruto saludable: {margen * 100:.1f}%.")
+                else:
+                    lectura.append(f"Margen bruto bajo: {margen * 100:.1f}%. Revise costos o precio de venta.")
+            if cxc > 0:
+                lectura.append(f"Cartera pendiente por {money(cxc)}. Priorice cobros y abonos.")
+            if stock_bajo > 0:
+                lectura.append(f"Hay {int(stock_bajo)} producto(s) en stock bajo.")
+            lectura = lectura[:5]
+
+            for idx, item in enumerate(lectura, start=15):
+                ws.merge_cells(start_row=idx, start_column=1, end_row=idx, end_column=8)
+                ws.cell(idx, 1).value = f"• {item}"
+                ws.cell(idx, 1).font = Font(color=texto, size=10)
+                ws.cell(idx, 1).alignment = Alignment(wrap_text=True, vertical="center")
+                ws.cell(idx, 1).fill = white_fill
+                ws.cell(idx, 1).border = Border(bottom=thin)
+
+            balance_start = 22
+            ws[f"A{balance_start}"] = "Concepto"
+            ws[f"B{balance_start}"] = "Valor"
+            balance_rows = [
+                ("Ventas", ventas),
+                ("Costo ventas", costo_ventas),
+                ("Gastos", gastos),
+                ("Utilidad", utilidad),
+            ]
+            for c in ["A", "B"]:
+                ws[f"{c}{balance_start}"].fill = dark_fill
+                ws[f"{c}{balance_start}"].font = Font(color="FFFFFF", bold=True)
+                ws[f"{c}{balance_start}"].alignment = Alignment(horizontal="center")
+            for i, (label, val) in enumerate(balance_rows, start=balance_start + 1):
+                ws[f"A{i}"] = label
+                ws[f"B{i}"] = val
+                ws[f"B{i}"].number_format = money_fmt
+                ws[f"A{i}"].border = soft_border
+                ws[f"B{i}"].border = soft_border
+                ws[f"A{i}"].fill = pale_green_fill if i % 2 == 0 else white_fill
+                ws[f"B{i}"].fill = pale_green_fill if i % 2 == 0 else white_fill
+
+            try:
+                chart = BarChart()
+                chart.title = "Balance del periodo"
+                chart.y_axis.title = "COP"
+                chart.x_axis.title = "Concepto"
+                data_ref = Reference(ws, min_col=2, min_row=balance_start, max_row=balance_start + len(balance_rows))
+                cats_ref = Reference(ws, min_col=1, min_row=balance_start + 1, max_row=balance_start + len(balance_rows))
+                chart.add_data(data_ref, titles_from_data=True)
+                chart.set_categories(cats_ref)
+                chart.height = 8
+                chart.width = 15
+                chart.style = 10
+                ws.add_chart(chart, "D21")
+            except Exception:
+                pass
+
+            ws.merge_cells("A30:H30")
+            ws["A30"] = "Nota: este Excel es de control interno. No reemplaza contabilidad, asesoría tributaria ni facturación electrónica."
+            ws["A30"].fill = pale_gold_fill
+            ws["A30"].font = Font(color=texto, italic=True, size=9)
+            ws["A30"].alignment = Alignment(wrap_text=True)
+            ws["A30"].border = Border(left=gold_side, right=gold_side, top=gold_side, bottom=gold_side)
+
+            def style_data_sheet(sheet_name, table_name, money_cols=None, percent_cols=None, date_cols=None):
+                money_cols = set(money_cols or [])
+                percent_cols = set(percent_cols or [])
+                date_cols = set(date_cols or [])
+                ws_data = wb[sheet_name]
+                ws_data.sheet_view.showGridLines = False
+                ws_data.freeze_panes = "A2"
+                ws_data.sheet_properties.tabColor = verde
+                max_row = ws_data.max_row
+                max_col = ws_data.max_column
+
+                for cell in ws_data[1]:
+                    cell.fill = dark_fill
+                    cell.font = Font(color="FFFFFF", bold=True)
+                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                    cell.border = Border(bottom=gold_side)
+
+                for row in ws_data.iter_rows(min_row=2, max_row=max_row, max_col=max_col):
+                    for cell in row:
+                        cell.fill = PatternFill("solid", fgColor="FFFFFF" if cell.row % 2 else crema2)
+                        cell.font = Font(color=texto, size=10)
+                        cell.border = Border(bottom=thin)
+                        cell.alignment = Alignment(vertical="center", wrap_text=True)
+                        header = ws_data.cell(1, cell.column).value
+                        if header in money_cols:
+                            cell.number_format = money_fmt
+                            cell.alignment = Alignment(horizontal="right", vertical="center")
+                        elif header in percent_cols:
+                            cell.number_format = pct_fmt
+                            cell.alignment = Alignment(horizontal="right", vertical="center")
+                        elif header in date_cols:
+                            cell.number_format = date_fmt
+                            cell.alignment = Alignment(horizontal="center", vertical="center")
+                        elif isinstance(cell.value, (int, float)):
+                            cell.alignment = Alignment(horizontal="right", vertical="center")
+
+                widths = {
+                    "Fecha": 13, "Registrado": 13, "Tipo": 18, "Categoría": 18, "Monto": 14,
+                    "Método de pago": 17, "Descripción": 38, "Cantidad": 12,
+                    "Costo unitario": 15, "Precio unitario": 15, "Código": 20, "Producto": 28,
+                    "Precio venta": 15, "Margen $": 14, "Margen %": 12, "Stock": 11,
+                    "Stock mínimo": 13, "Rotación periodo": 17, "Activo": 10, "Tercero": 26,
+                    "Documento": 16, "Teléfono": 16, "Concepto": 28, "Monto total": 15,
+                    "Saldo pendiente": 17, "Vencimiento": 14, "Estado": 14, "Observaciones": 34,
+                }
+                for idx in range(1, max_col + 1):
+                    header = ws_data.cell(1, idx).value
+                    width = widths.get(str(header), max(12, min(26, len(str(header or "")) + 3)))
+                    ws_data.column_dimensions[get_column_letter(idx)].width = width
+                ws_data.row_dimensions[1].height = 28
+                for r in range(2, max_row + 1):
+                    ws_data.row_dimensions[r].height = 22
+
+                if max_row >= 2 and max_col >= 1:
+                    ref = f"A1:{get_column_letter(max_col)}{max_row}"
+                    try:
+                        tab = XLTable(displayName=table_name, ref=ref)
+                        style = TableStyleInfo(name="TableStyleMedium4", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+                        tab.tableStyleInfo = style
+                        ws_data.add_table(tab)
+                    except Exception:
+                        ws_data.auto_filter.ref = ref
+
+                try:
+                    if "Monto" in [ws_data.cell(1, c).value for c in range(1, max_col + 1)]:
+                        col_idx = [ws_data.cell(1, c).value for c in range(1, max_col + 1)].index("Monto") + 1
+                        col_letter = get_column_letter(col_idx)
+                        ws_data.conditional_formatting.add(
+                            f"{col_letter}2:{col_letter}{max_row}",
+                            CellIsRule(operator="greaterThan", formula=["0"], fill=PatternFill("solid", fgColor="EAF8F1"))
+                        )
+                except Exception:
+                    pass
+
+            style_data_sheet(
+                "Movimientos",
+                "TablaMovimientosBradaFin",
+                money_cols=["Monto", "Costo unitario", "Precio unitario"],
+                date_cols=["Fecha", "Registrado"],
+            )
+            style_data_sheet(
+                "Inventario",
+                "TablaInventarioBradaFin",
+                money_cols=["Costo unitario", "Precio venta", "Margen $"],
+                percent_cols=["Margen %"],
+            )
+            style_data_sheet(
+                "Cartera",
+                "TablaCarteraBradaFin",
+                money_cols=["Monto total", "Saldo pendiente"],
+                date_cols=["Fecha", "Vencimiento"],
+            )
+
+            for sheet_name in ["Movimientos", "Inventario", "Cartera"]:
+                wsx = wb[sheet_name]
+                wsx.sheet_view.zoomScale = 95
+                wsx.page_setup.orientation = "landscape"
+                wsx.page_setup.fitToWidth = 1
+                wsx.page_setup.fitToHeight = 0
+                wsx.sheet_properties.pageSetUpPr.fitToPage = True
+
+            ws.sheet_view.zoomScale = 90
+            ws.page_setup.orientation = "landscape"
+            ws.page_setup.fitToWidth = 1
+            ws.page_setup.fitToHeight = 1
+            ws.sheet_properties.pageSetUpPr.fitToPage = True
+
         buffer.seek(0)
         return buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename
+
     except Exception:
-        return out.to_csv(index=False).encode("utf-8-sig"), "text/csv", filename.replace(".xlsx", ".csv")
+        try:
+            raw = out.copy()
+            for col in raw.columns:
+                if pd.api.types.is_datetime64_any_dtype(raw[col]):
+                    raw[col] = raw[col].dt.strftime("%Y-%m-%d")
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                raw.to_excel(writer, index=False, sheet_name="datos")
+            buffer.seek(0)
+            return buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename
+        except Exception:
+            return out.to_csv(index=False).encode("utf-8-sig"), "text/csv", filename.replace(".xlsx", ".csv")
 
 
 def generar_pdf_reporte(negocio, periodo, fecha_base, metricas, df_movs, df_cuentas, df_productos):
@@ -3045,8 +3490,8 @@ def render_reportes(negocio, user_id, df_movs, df_cuentas, df_productos):
     st.markdown("</div>", unsafe_allow_html=True)
     col1,col2 = st.columns(2)
     with col1:
-        archivo, mime, fname = exportar_excel(metricas["df_periodo"], f"bradafin_movimientos_{periodo.lower()}_{date.today()}.xlsx")
-        st.download_button("Descargar movimientos Excel", data=archivo, file_name=fname, mime=mime, use_container_width=True)
+        archivo, mime, fname = exportar_excel(metricas["df_periodo"], f"bradafin_reporte_excel_{periodo.lower()}_{date.today()}.xlsx", negocio=negocio, periodo=periodo, fecha_base=fecha_base, metricas=metricas, df_cuentas=df_cuentas, df_productos=df_productos)
+        st.download_button("Descargar Excel premium", data=archivo, file_name=fname, mime=mime, use_container_width=True)
     with col2:
         pdf = generar_pdf_reporte(negocio, periodo, fecha_base, metricas, df_movs, df_cuentas, df_productos)
         if pdf:
