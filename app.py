@@ -1096,6 +1096,103 @@ def aplicar_estilo_bradafin():
         .whatsapp-status.warn { background: rgba(245,158,11,.22); border-color: rgba(253,230,138,.38); }
         .whatsapp-status.err { background: rgba(239,68,68,.20); border-color: rgba(254,202,202,.36); }
 
+
+        /* =================================================== */
+        /* COMPROBANTE DE VENTA PREMIUM */
+        /* =================================================== */
+        .receipt-shell {
+            border-radius: 30px;
+            padding: 1rem;
+            margin: .8rem 0 1rem 0;
+            background:
+                radial-gradient(circle at 16% 12%, rgba(242,209,107,.22), transparent 36%),
+                linear-gradient(135deg, #0B1612 0%, #14513D 58%, #1F6B4F 82%, #D4A017 100%);
+            border: 1px solid rgba(255,255,255,.18);
+            box-shadow: 0 26px 52px rgba(16,32,25,.22);
+        }
+        .receipt-shell,
+        .receipt-shell * {
+            color: #FFFFFF !important;
+        }
+        .receipt-top {
+            display:flex;
+            justify-content:space-between;
+            align-items:flex-start;
+            gap:1rem;
+            margin-bottom:.85rem;
+        }
+        .receipt-title {
+            font-size:1.18rem;
+            font-weight:950;
+            letter-spacing:-.03em;
+        }
+        .receipt-sub {
+            font-size:.84rem;
+            color:rgba(255,255,255,.80) !important;
+            line-height:1.45;
+            margin-top:.2rem;
+        }
+        .receipt-chip {
+            border-radius:999px;
+            padding:.38rem .72rem;
+            font-size:.78rem;
+            font-weight:950;
+            color:#102019 !important;
+            background:rgba(255,255,255,.92);
+            border:1px solid rgba(242,209,107,.40);
+            white-space:nowrap;
+        }
+        .receipt-card {
+            background:linear-gradient(180deg,#FFFFFF 0%,#FBFFF8 100%);
+            border-radius:24px;
+            padding:1rem;
+            border:1px solid rgba(212,160,23,.32);
+            box-shadow:0 18px 34px rgba(0,0,0,.13), inset 0 1px 0 rgba(255,255,255,.78);
+        }
+        .receipt-card,
+        .receipt-card * {
+            color:#102019 !important;
+        }
+        .receipt-row {
+            display:flex;
+            justify-content:space-between;
+            gap:.8rem;
+            padding:.48rem 0;
+            border-bottom:1px solid rgba(16,32,25,.08);
+            font-size:.91rem;
+        }
+        .receipt-row:last-child {
+            border-bottom:none;
+        }
+        .receipt-label {
+            color:#52675C !important;
+            font-weight:850;
+        }
+        .receipt-value {
+            font-weight:950;
+            text-align:right;
+        }
+        .receipt-total {
+            margin-top:.75rem;
+            padding:.85rem .9rem;
+            border-radius:20px;
+            background:linear-gradient(135deg,#102019 0%,#14513D 65%,#D4A017 100%);
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            gap:1rem;
+        }
+        .receipt-total,
+        .receipt-total * {
+            color:#FFFFFF !important;
+        }
+        .receipt-note {
+            margin-top:.75rem;
+            color:rgba(255,255,255,.82) !important;
+            font-size:.78rem;
+            line-height:1.45;
+        }
+
         #MainMenu, footer { visibility:hidden; }
 
         @media (max-width: 900px) {
@@ -3032,6 +3129,541 @@ def generar_pdf_reporte(negocio, periodo, fecha_base, metricas, df_movs, df_cuen
     return buffer.getvalue()
 
 
+
+# ============================================================
+# COMPROBANTES DE VENTA
+# ============================================================
+
+@st.cache_data(ttl=30, show_spinner=False)
+def obtener_comprobantes(negocio_id):
+    cols = [
+        "id","negocio_id","usuario_id","numero","fecha","cliente_id","cliente_nombre",
+        "documento","telefono","subtotal","descuento","total","valor_pagado",
+        "saldo_pendiente","metodo_pago","estado","cuenta_id","observaciones",
+        "creado_en","actualizado_en"
+    ]
+    try:
+        res = supabase.table("bradafin_comprobantes").select("*").eq("negocio_id", negocio_id).order("fecha", desc=True).execute()
+        df = pd.DataFrame(res.data or [])
+    except Exception:
+        df = pd.DataFrame(columns=cols)
+    for c in cols:
+        if c not in df.columns:
+            df[c] = None
+    df = normalizar_fecha(df, ["fecha", "creado_en", "actualizado_en"])
+    for c in ["subtotal", "descuento", "total", "valor_pagado", "saldo_pendiente"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    for c in ["numero", "cliente_nombre", "documento", "telefono", "metodo_pago", "estado", "observaciones"]:
+        df[c] = df[c].fillna("").astype(str)
+    return df
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def obtener_comprobante_items(negocio_id):
+    cols = [
+        "id","negocio_id","usuario_id","comprobante_id","producto_id","codigo",
+        "nombre","cantidad","costo_unitario","precio_unitario","subtotal","creado_en"
+    ]
+    try:
+        res = supabase.table("bradafin_comprobante_items").select("*").eq("negocio_id", negocio_id).order("creado_en", desc=False).execute()
+        df = pd.DataFrame(res.data or [])
+    except Exception:
+        df = pd.DataFrame(columns=cols)
+    for c in cols:
+        if c not in df.columns:
+            df[c] = None
+    df = normalizar_fecha(df, ["creado_en"])
+    for c in ["cantidad", "costo_unitario", "precio_unitario", "subtotal"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    for c in ["codigo", "nombre"]:
+        df[c] = df[c].fillna("").astype(str)
+    return df
+
+
+def generar_numero_comprobante(negocio_id, df_comprobantes):
+    year = datetime.now().year
+    prefijo = f"BRF-COMP-{year}-"
+    siguiente = 1
+    try:
+        if isinstance(df_comprobantes, pd.DataFrame) and not df_comprobantes.empty and "numero" in df_comprobantes.columns:
+            nums = []
+            for n in df_comprobantes["numero"].fillna("").astype(str).tolist():
+                if n.startswith(prefijo):
+                    m = re.search(r"(\d+)$", n)
+                    if m:
+                        nums.append(int(m.group(1)))
+            siguiente = max(nums) + 1 if nums else len(df_comprobantes.index) + 1
+    except Exception:
+        siguiente = 1
+    return f"{prefijo}{siguiente:06d}"
+
+
+def estado_comprobante(total, valor_pagado, saldo):
+    try:
+        total = float(total or 0)
+        valor_pagado = float(valor_pagado or 0)
+        saldo = float(saldo or 0)
+    except Exception:
+        return "pendiente"
+    if saldo <= 0:
+        return "pagado"
+    if valor_pagado > 0:
+        return "abonado"
+    return "fiado"
+
+
+def mensaje_comprobante_cliente(negocio, comprobante):
+    nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
+    cliente = comprobante.get("cliente_nombre", "") or "cliente"
+    return limpiar_texto_whatsapp(f"""
+BradaFin | {nombre_negocio}
+Comprobante de venta
+
+Hola {cliente}.
+
+Se generó un comprobante de venta a tu nombre:
+
+Comprobante: {comprobante.get('numero', '')}
+Total: {money(comprobante.get('total', 0))}
+Pagado: {money(comprobante.get('valor_pagado', 0))}
+Saldo pendiente: {money(comprobante.get('saldo_pendiente', 0))}
+Estado: {comprobante.get('estado', '')}
+
+Gracias por tu compra.
+
+Este documento es un comprobante interno.
+No reemplaza factura electrónica ni documento equivalente.
+
+{whatsapp_footer(negocio)}
+""")
+
+
+def mensaje_comprobante_comerciante(negocio, comprobante):
+    nombre_negocio = (negocio or {}).get("nombre", "BradaFin")
+    return limpiar_texto_whatsapp(f"""
+BradaFin | {nombre_negocio}
+Venta registrada con comprobante
+
+Comprobante: {comprobante.get('numero', '')}
+Cliente: {comprobante.get('cliente_nombre', '')}
+Total: {money(comprobante.get('total', 0))}
+Pagado: {money(comprobante.get('valor_pagado', 0))}
+Saldo: {money(comprobante.get('saldo_pendiente', 0))}
+Método: {comprobante.get('metodo_pago', '')}
+
+Inventario, ventas y cartera quedaron actualizados.
+""")
+
+
+def generar_pdf_comprobante_venta(negocio, comprobante, items):
+    if not REPORTLAB_AVAILABLE:
+        return None
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=28,
+        leftMargin=28,
+        topMargin=28,
+        bottomMargin=30,
+    )
+
+    VERDE_OSCURO = colors.HexColor("#102019")
+    VERDE = colors.HexColor("#14513D")
+    VERDE_MEDIO = colors.HexColor("#1F6B4F")
+    DORADO = colors.HexColor("#D4A017")
+    DORADO_SUAVE = colors.HexColor("#FFF4CF")
+    CREMA = colors.HexColor("#FFFCF3")
+    CREMA2 = colors.HexColor("#F6FAF4")
+    TEXTO = colors.HexColor("#102019")
+    MUTED = colors.HexColor("#52675C")
+    LINEA = colors.HexColor("#DDE8DF")
+    ROJO = colors.HexColor("#C2410C")
+
+    styles = getSampleStyleSheet()
+
+    def pdf_text(value):
+        return safe(value).replace("\n", "<br/>")
+
+    title = ParagraphStyle("CompTitle", parent=styles["Title"], textColor=VERDE_OSCURO, fontName="Helvetica-Bold", fontSize=22, leading=26, alignment=2)
+    subtitle = ParagraphStyle("CompSub", parent=styles["BodyText"], textColor=MUTED, fontName="Helvetica", fontSize=8.8, leading=11, alignment=2)
+    h_white = ParagraphStyle("CompWhite", parent=styles["BodyText"], textColor=colors.white, fontName="Helvetica-Bold", fontSize=12.5, leading=16)
+    small_white = ParagraphStyle("CompSmallWhite", parent=styles["BodyText"], textColor=colors.HexColor("#EAF8F1"), fontName="Helvetica", fontSize=8.5, leading=11)
+    p = ParagraphStyle("CompP", parent=styles["BodyText"], textColor=TEXTO, fontName="Helvetica", fontSize=8.5, leading=11)
+    p_bold = ParagraphStyle("CompPBold", parent=p, fontName="Helvetica-Bold", textColor=VERDE_OSCURO)
+    p_muted = ParagraphStyle("CompMuted", parent=p, textColor=MUTED, fontSize=7.6, leading=10)
+    table_head = ParagraphStyle("CompTableHead", parent=p, textColor=colors.white, fontName="Helvetica-Bold", fontSize=7.3, leading=9)
+    table_cell = ParagraphStyle("CompTableCell", parent=p, fontSize=7.2, leading=9)
+    table_money = ParagraphStyle("CompMoney", parent=table_cell, fontName="Helvetica-Bold", textColor=VERDE_OSCURO)
+
+    def page_bg(canvas, doc_obj):
+        canvas.saveState()
+        width, height = A4
+        canvas.setFillColor(CREMA)
+        canvas.rect(0, 0, width, height, fill=1, stroke=0)
+        canvas.setFillColor(CREMA2)
+        canvas.rect(0, 0, width, height * 0.78, fill=1, stroke=0)
+        canvas.setFillColor(VERDE_OSCURO)
+        canvas.rect(0, height - 18, width, 18, fill=1, stroke=0)
+        canvas.setFillColor(DORADO)
+        canvas.rect(0, height - 20, width, 2, fill=1, stroke=0)
+        canvas.setFillColor(MUTED)
+        canvas.setFont("Helvetica", 7.1)
+        canvas.drawString(28, 18, "BradaFin - comprobante interno de venta")
+        canvas.drawRightString(width - 28, 18, f"Pagina {doc_obj.page}")
+        canvas.restoreState()
+
+    def make_logo():
+        logo_path = None
+        try:
+            if BRADAFIN_LOGO_FULL_PATH and Path(BRADAFIN_LOGO_FULL_PATH).exists():
+                logo_path = BRADAFIN_LOGO_FULL_PATH
+            elif BRADAFIN_ICON_PATH and Path(BRADAFIN_ICON_PATH).exists():
+                logo_path = BRADAFIN_ICON_PATH
+        except Exception:
+            logo_path = None
+        if logo_path:
+            try:
+                img = Image(str(logo_path), width=130, height=44, kind="proportional")
+                img.hAlign = "LEFT"
+                return img
+            except Exception:
+                pass
+        return Paragraph("<b>BradaFin</b>", ParagraphStyle("CompLogoFallback", parent=styles["Heading1"], textColor=VERDE, fontName="Helvetica-Bold", fontSize=20, leading=24))
+
+    negocio_nombre = (negocio or {}).get("nombre", "Negocio")
+    negocio_tel = (negocio or {}).get("telefono", "")
+    negocio_ciudad = (negocio or {}).get("ciudad", "")
+    numero = comprobante.get("numero", "")
+    fecha_val = comprobante.get("fecha", date.today())
+    try:
+        fecha_txt = pd.to_datetime(fecha_val).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        fecha_txt = str(fecha_val or "")
+
+    story = []
+    header = Table(
+        [[
+            make_logo(),
+            [
+                Paragraph("Comprobante de venta", title),
+                Paragraph(f"{pdf_text(negocio_nombre)}  |  {pdf_text(numero)}  |  {fecha_txt}", subtitle),
+            ],
+        ]],
+        colWidths=[168, 365],
+        rowHeights=[54],
+    )
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.white),
+        ("BOX", (0,0), (-1,-1), 0.4, LINEA),
+        ("LEFTPADDING", (0,0), (-1,-1), 12),
+        ("RIGHTPADDING", (0,0), (-1,-1), 12),
+        ("TOPPADDING", (0,0), (-1,-1), 7),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+    ]))
+    story.append(header)
+    story.append(Spacer(1, 10))
+
+    hero = Table(
+        [[
+            [Paragraph("Soporte interno de venta", h_white), Paragraph("Documento generado para agilizar el registro comercial y servir como base operativa para procesos posteriores.", small_white)],
+            [Paragraph("ESTADO", small_white), Paragraph(str(comprobante.get("estado", "pagado")).upper(), h_white)],
+        ]],
+        colWidths=[350, 183],
+        rowHeights=[62],
+    )
+    hero.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), VERDE_OSCURO),
+        ("LINEBEFORE", (1,0), (1,0), 1, DORADO),
+        ("LEFTPADDING", (0,0), (-1,-1), 14),
+        ("RIGHTPADDING", (0,0), (-1,-1), 14),
+        ("TOPPADDING", (0,0), (-1,-1), 10),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+    ]))
+    story.append(hero)
+    story.append(Spacer(1, 11))
+
+    cliente_data = [
+        [
+            Paragraph("<b>Negocio</b>", p_bold),
+            Paragraph("<b>Cliente</b>", p_bold),
+            Paragraph("<b>Resumen</b>", p_bold),
+        ],
+        [
+            Paragraph(f"{pdf_text(negocio_nombre)}<br/>Tel: {pdf_text(negocio_tel)}<br/>{pdf_text(negocio_ciudad)}", p),
+            Paragraph(f"{pdf_text(comprobante.get('cliente_nombre',''))}<br/>Doc: {pdf_text(comprobante.get('documento',''))}<br/>WhatsApp: {pdf_text(comprobante.get('telefono',''))}", p),
+            Paragraph(f"Total: <b>{money(comprobante.get('total',0))}</b><br/>Pagado: <b>{money(comprobante.get('valor_pagado',0))}</b><br/>Saldo: <b>{money(comprobante.get('saldo_pendiente',0))}</b>", p),
+        ],
+    ]
+    info_tbl = Table(cliente_data, colWidths=[177, 177, 179])
+    info_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), DORADO_SUAVE),
+        ("BACKGROUND", (0,1), (-1,-1), colors.white),
+        ("GRID", (0,0), (-1,-1), 0.3, LINEA),
+        ("LEFTPADDING", (0,0), (-1,-1), 9),
+        ("RIGHTPADDING", (0,0), (-1,-1), 9),
+        ("TOPPADDING", (0,0), (-1,-1), 7),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+    ]))
+    story.append(info_tbl)
+    story.append(Spacer(1, 12))
+
+    data = [[
+        Paragraph("Código", table_head),
+        Paragraph("Producto / servicio", table_head),
+        Paragraph("Cant.", table_head),
+        Paragraph("Vr. unitario", table_head),
+        Paragraph("Subtotal", table_head),
+    ]]
+    if isinstance(items, pd.DataFrame):
+        item_rows = items.to_dict("records")
+    else:
+        item_rows = items or []
+    for item in item_rows:
+        data.append([
+            Paragraph(pdf_text(str(item.get("codigo", ""))[:20]), table_cell),
+            Paragraph(pdf_text(str(item.get("nombre", ""))[:48]), table_cell),
+            Paragraph(f"{float(item.get('cantidad', 0) or 0):g}", table_money),
+            Paragraph(money(item.get("precio_unitario", 0)), table_money),
+            Paragraph(money(item.get("subtotal", 0)), table_money),
+        ])
+    items_tbl = Table(data, colWidths=[82, 223, 48, 85, 95], repeatRows=1)
+    items_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), VERDE_OSCURO),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("LINEBELOW", (0,0), (-1,0), 1.1, DORADO),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#F6FAF4")]),
+        ("GRID", (0,0), (-1,-1), 0.25, LINEA),
+        ("LEFTPADDING", (0,0), (-1,-1), 6),
+        ("RIGHTPADDING", (0,0), (-1,-1), 6),
+        ("TOPPADDING", (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("ALIGN", (2,1), (-1,-1), "RIGHT"),
+    ]))
+    story.append(items_tbl)
+    story.append(Spacer(1, 11))
+
+    totals = Table(
+        [
+            [Paragraph("Subtotal", p), Paragraph(money(comprobante.get("subtotal", 0)), table_money)],
+            [Paragraph("Descuento", p), Paragraph(money(comprobante.get("descuento", 0)), table_money)],
+            [Paragraph("<b>Total</b>", p_bold), Paragraph(f"<b>{money(comprobante.get('total', 0))}</b>", table_money)],
+            [Paragraph("Pagado", p), Paragraph(money(comprobante.get("valor_pagado", 0)), table_money)],
+            [Paragraph("Saldo pendiente", p), Paragraph(money(comprobante.get("saldo_pendiente", 0)), table_money)],
+        ],
+        colWidths=[385, 148],
+    )
+    totals.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.white),
+        ("BACKGROUND", (0,2), (-1,2), DORADO_SUAVE),
+        ("GRID", (0,0), (-1,-1), 0.25, LINEA),
+        ("LEFTPADDING", (0,0), (-1,-1), 8),
+        ("RIGHTPADDING", (0,0), (-1,-1), 8),
+        ("TOPPADDING", (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("ALIGN", (1,0), (1,-1), "RIGHT"),
+    ]))
+    story.append(totals)
+    story.append(Spacer(1, 10))
+
+    obs = comprobante.get("observaciones", "")
+    if obs:
+        story.append(Paragraph(f"<b>Observaciones:</b> {pdf_text(obs)}", p))
+        story.append(Spacer(1, 8))
+
+    note = Table(
+        [[Paragraph("<b>Nota legal:</b> este documento es un comprobante interno generado por BradaFin. No reemplaza factura electrónica, documento equivalente, contabilidad ni asesoría tributaria.", p_muted)]],
+        colWidths=[533],
+    )
+    note.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), DORADO_SUAVE),
+        ("BOX", (0,0), (-1,-1), 0.4, DORADO),
+        ("LEFTPADDING", (0,0), (-1,-1), 10),
+        ("RIGHTPADDING", (0,0), (-1,-1), 10),
+        ("TOPPADDING", (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+    ]))
+    story.append(note)
+
+    doc.build(story, onFirstPage=page_bg, onLaterPages=page_bg)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def crear_comprobante_venta(negocio, user_id, cliente, items, fecha_venta, metodo_pago, descuento, valor_pagado, fecha_vencimiento, observaciones, df_comprobantes):
+    negocio_id = negocio["id"]
+    items = items or []
+    items_limpios = []
+    subtotal = 0.0
+    costo_total = 0.0
+
+    for it in items:
+        nombre = str(it.get("nombre", "") or "").strip()
+        cantidad = float(it.get("cantidad", 0) or 0)
+        precio = float(it.get("precio_unitario", 0) or 0)
+        costo = float(it.get("costo_unitario", 0) or 0)
+        if not nombre or cantidad <= 0 or precio < 0:
+            continue
+        sub = cantidad * precio
+        subtotal += sub
+        costo_total += cantidad * costo
+        items_limpios.append({
+            "producto_id": id_limpio(it.get("producto_id")),
+            "codigo": str(it.get("codigo", "") or "").strip(),
+            "nombre": nombre,
+            "cantidad": cantidad,
+            "costo_unitario": costo,
+            "precio_unitario": precio,
+            "subtotal": sub,
+        })
+
+    descuento = max(float(descuento or 0), 0)
+    total = max(subtotal - descuento, 0)
+    valor_pagado = max(float(valor_pagado or 0), 0)
+    if valor_pagado > total:
+        valor_pagado = total
+    saldo = max(total - valor_pagado, 0)
+
+    if not items_limpios:
+        return False, "Agrega al menos un producto o servicio válido.", None, None
+    if total <= 0:
+        return False, "El total del comprobante debe ser mayor a cero.", None, None
+
+    numero = generar_numero_comprobante(negocio_id, df_comprobantes)
+    estado = estado_comprobante(total, valor_pagado, saldo)
+    cliente = cliente or {}
+    payload_comp = {
+        "negocio_id": negocio_id,
+        "usuario_id": user_id,
+        "numero": numero,
+        "fecha": fecha_venta.isoformat() if hasattr(fecha_venta, "isoformat") else str(fecha_venta),
+        "cliente_id": id_limpio(cliente.get("id")),
+        "cliente_nombre": str(cliente.get("nombre", "") or "Cliente general").strip(),
+        "documento": str(cliente.get("documento", "") or "").strip(),
+        "telefono": limpiar_telefono(cliente.get("telefono", "")),
+        "subtotal": subtotal,
+        "descuento": descuento,
+        "total": total,
+        "valor_pagado": valor_pagado,
+        "saldo_pendiente": saldo,
+        "metodo_pago": metodo_pago,
+        "estado": estado,
+        "observaciones": str(observaciones or "").strip(),
+        "creado_en": datetime.now().isoformat(),
+        "actualizado_en": datetime.now().isoformat(),
+    }
+
+    ok, res = insert_safe("bradafin_comprobantes", payload_comp)
+    if not ok:
+        return False, f"No pude guardar el comprobante. Verifica que hayas creado las tablas nuevas en Supabase. Detalle: {res}", None, None
+    try:
+        comprobante = res.data[0]
+    except Exception:
+        comprobante = payload_comp
+    comp_id = comprobante.get("id")
+
+    rows_items = []
+    for it in items_limpios:
+        rows_items.append({
+            "negocio_id": negocio_id,
+            "usuario_id": user_id,
+            "comprobante_id": comp_id,
+            "producto_id": it.get("producto_id"),
+            "codigo": it.get("codigo"),
+            "nombre": it.get("nombre"),
+            "cantidad": it.get("cantidad"),
+            "costo_unitario": it.get("costo_unitario"),
+            "precio_unitario": it.get("precio_unitario"),
+            "subtotal": it.get("subtotal"),
+            "creado_en": datetime.now().isoformat(),
+        })
+    ok_items, res_items = insert_safe("bradafin_comprobante_items", rows_items)
+    if not ok_items:
+        return False, f"Se creó el comprobante, pero no pude guardar el detalle de productos: {res_items}", comprobante, pd.DataFrame(rows_items)
+
+    # Descuenta inventario solo en productos asociados. Los servicios/manuales no tocan stock.
+    for it in items_limpios:
+        if it.get("producto_id"):
+            actualizar_stock_producto(it.get("producto_id"), -float(it.get("cantidad", 0) or 0))
+
+    desc_mov = f"Comprobante {numero} · {payload_comp['cliente_nombre']}"
+    crear_movimiento(
+        negocio_id,
+        user_id,
+        "Venta",
+        "Comprobante de venta",
+        total,
+        fecha_venta,
+        metodo_pago,
+        desc_mov,
+        producto_id=None,
+        cantidad=sum(float(x.get("cantidad", 0) or 0) for x in items_limpios),
+        costo_unitario=0,
+        precio_unitario=0,
+    )
+
+    cuenta_id = None
+    if saldo > 0:
+        estado_cuenta = "abonada" if valor_pagado > 0 else "pendiente"
+        try:
+            if fecha_vencimiento and pd.to_datetime(fecha_vencimiento) < pd.Timestamp.today().normalize():
+                estado_cuenta = "vencida"
+        except Exception:
+            pass
+        payload_cuenta = {
+            "negocio_id": negocio_id,
+            "usuario_id": user_id,
+            "tipo": "Por cobrar",
+            "tercero_id": id_limpio(cliente.get("id")),
+            "tercero_tipo": "cliente",
+            "tercero_nombre": payload_comp["cliente_nombre"],
+            "documento": payload_comp["documento"],
+            "telefono": payload_comp["telefono"],
+            "concepto": f"Comprobante {numero}",
+            "monto_total": total,
+            "saldo_pendiente": saldo,
+            "fecha": fecha_venta.isoformat() if hasattr(fecha_venta, "isoformat") else str(fecha_venta),
+            "fecha_vencimiento": fecha_vencimiento.isoformat() if hasattr(fecha_vencimiento, "isoformat") else (str(fecha_vencimiento) if fecha_vencimiento else None),
+            "estado": estado_cuenta,
+            "observaciones": f"Cuenta generada desde comprobante {numero}. {str(observaciones or '').strip()}".strip(),
+            "creado_en": datetime.now().isoformat(),
+            "actualizado_en": datetime.now().isoformat(),
+        }
+        ok_cta, res_cta = insert_safe("bradafin_cuentas", payload_cuenta)
+        if ok_cta:
+            try:
+                cuenta_id = res_cta.data[0]["id"]
+                update_safe("bradafin_comprobantes", {"cuenta_id": cuenta_id, "actualizado_en": datetime.now().isoformat()}, "id", comp_id)
+                comprobante["cuenta_id"] = cuenta_id
+            except Exception:
+                pass
+            if valor_pagado > 0 and cuenta_id:
+                payload_abono = {
+                    "negocio_id": negocio_id,
+                    "usuario_id": user_id,
+                    "cuenta_id": cuenta_id,
+                    "fecha": fecha_venta.isoformat() if hasattr(fecha_venta, "isoformat") else str(fecha_venta),
+                    "monto": valor_pagado,
+                    "metodo_pago": metodo_pago,
+                    "nota": f"Pago inicial del comprobante {numero}",
+                    "creado_en": datetime.now().isoformat(),
+                }
+                insert_safe("bradafin_abonos", payload_abono)
+
+    clear_cache()
+    comprobante.update(payload_comp)
+    if comp_id:
+        comprobante["id"] = comp_id
+    if cuenta_id:
+        comprobante["cuenta_id"] = cuenta_id
+    return True, "Comprobante creado correctamente.", comprobante, pd.DataFrame(rows_items)
+
+
 # ============================================================
 # OPERACIONES DE NEGOCIO
 # ============================================================
@@ -3943,6 +4575,266 @@ def render_inventario(negocio, user_id, df_productos, df_movs):
             st.info("Para imagen de código instala python-barcode y pillow. El código interno ya está guardado.")
         st.markdown("</div>", unsafe_allow_html=True)
 
+
+def render_comprobantes(negocio, user_id, df_clientes, df_productos, df_comprobantes, df_comprobante_items):
+    negocio_id = negocio["id"]
+    st.markdown("<div class='hero-card'><div class='hero-badge'>Comprobantes</div><div class='hero-title'>Venta rápida con soporte interno premium.</div><div class='hero-sub'>Genere un comprobante de venta, descuente inventario, cree cartera si queda saldo y envíe aviso por WhatsApp.</div></div>", unsafe_allow_html=True)
+
+    ultimo = st.session_state.pop("bradafin_ultimo_comprobante", None)
+    if ultimo:
+        comp = ultimo.get("comprobante", {})
+        items_ultimo = pd.DataFrame(ultimo.get("items", []))
+        st.success(f"Comprobante {comp.get('numero','')} creado correctamente.")
+        pdf = generar_pdf_comprobante_venta(negocio, comp, items_ultimo)
+        if pdf:
+            st.download_button(
+                "Descargar último comprobante PDF",
+                data=pdf,
+                file_name=f"comprobante_{comp.get('numero','bradafin')}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        st.markdown(
+            f"""
+            <div class='receipt-shell'>
+                <div class='receipt-top'>
+                    <div>
+                        <div class='receipt-title'>Comprobante generado</div>
+                        <div class='receipt-sub'>Registro interno creado y listo para compartir.</div>
+                    </div>
+                    <div class='receipt-chip'>{safe(comp.get('estado','')).upper()}</div>
+                </div>
+                <div class='receipt-card'>
+                    <div class='receipt-row'><div class='receipt-label'>Número</div><div class='receipt-value'>{safe(comp.get('numero',''))}</div></div>
+                    <div class='receipt-row'><div class='receipt-label'>Cliente</div><div class='receipt-value'>{safe(comp.get('cliente_nombre',''))}</div></div>
+                    <div class='receipt-row'><div class='receipt-label'>Pagado</div><div class='receipt-value'>{money(comp.get('valor_pagado',0))}</div></div>
+                    <div class='receipt-row'><div class='receipt-label'>Saldo</div><div class='receipt-value'>{money(comp.get('saldo_pendiente',0))}</div></div>
+                    <div class='receipt-total'><div>Total</div><div>{money(comp.get('total',0))}</div></div>
+                </div>
+                <div class='receipt-note'>Este documento es comprobante interno. No reemplaza factura electrónica ni documento equivalente.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    tabs = st.tabs(["Nuevo comprobante", "Historial"])
+    with tabs[0]:
+        col_form, col_help = st.columns([1.15, .85], gap="large")
+        with col_form:
+            st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+            section_header("Crear comprobante de venta", "Seleccione cliente, productos, pago y saldo si queda fiado.")
+            if df_productos is None or df_productos.empty:
+                st.warning("Primero registre productos en Inventario. También puede usar ítems manuales tipo servicio, pero lo ideal es manejar inventario.")
+            clientes_map = {"": "Cliente manual / general"}
+            for _, r in df_clientes.iterrows():
+                clientes_map[str(r["id"])] = f"{r.get('nombre','')} · {r.get('documento','')}"
+
+            with st.form("comprobante_form", clear_on_submit=True):
+                c1, c2, c3 = st.columns([1, .85, .85])
+                with c1:
+                    fecha_venta = st.date_input("Fecha de venta", value=date.today())
+                with c2:
+                    metodo = st.selectbox("Método de pago", METODOS_PAGO, key="comp_metodo")
+                with c3:
+                    num_items = st.number_input("Cantidad de líneas", min_value=1, max_value=8, value=1, step=1)
+
+                cliente_id = st.selectbox("Cliente", list(clientes_map.keys()), format_func=lambda x: clientes_map.get(x, x), key="comp_cliente")
+                cliente_obj = {}
+                if cliente_id:
+                    try:
+                        cliente_obj = df_clientes[df_clientes["id"].astype(str) == str(cliente_id)].iloc[0].to_dict()
+                    except Exception:
+                        cliente_obj = {}
+                    st.caption(f"Cliente seleccionado: {cliente_obj.get('nombre','')} · {cliente_obj.get('telefono','')}")
+                else:
+                    c1, c2, c3 = st.columns([1.1, .8, .8])
+                    with c1:
+                        cliente_nombre = st.text_input("Nombre cliente", value="Cliente general")
+                    with c2:
+                        cliente_doc = st.text_input("Documento / cédula")
+                    with c3:
+                        cliente_tel = st.text_input("WhatsApp cliente", placeholder="573001112233")
+                    cliente_obj = {"id": None, "nombre": cliente_nombre, "documento": cliente_doc, "telefono": cliente_tel}
+
+                st.markdown("**Productos / servicios**")
+                productos_activos = df_productos[df_productos["activo"] == True].copy() if isinstance(df_productos, pd.DataFrame) and not df_productos.empty and "activo" in df_productos.columns else pd.DataFrame()
+                opciones_prod = {"": "Ítem manual / servicio"}
+                for _, r in productos_activos.iterrows():
+                    opciones_prod[str(r["id"])] = f"{r.get('codigo','')} · {r.get('nombre','')} · stock {float(r.get('stock',0) or 0):g}"
+
+                items_form = []
+                subtotal_preview = 0.0
+                for i in range(int(num_items)):
+                    st.markdown(f"<div class='muted'><b>Línea {i+1}</b></div>", unsafe_allow_html=True)
+                    c1, c2, c3 = st.columns([1.35, .45, .65])
+                    with c1:
+                        prod_id = st.selectbox("Producto", list(opciones_prod.keys()), format_func=lambda x: opciones_prod.get(x, x), key=f"comp_prod_{i}")
+                    prod = {}
+                    if prod_id:
+                        try:
+                            prod = productos_activos[productos_activos["id"].astype(str) == str(prod_id)].iloc[0].to_dict()
+                        except Exception:
+                            prod = {}
+                    with c2:
+                        qty = st.number_input("Cant.", min_value=0.0, step=1.0, value=1.0, key=f"comp_qty_{i}")
+                    with c3:
+                        precio_default = float(prod.get("precio_venta", 0) or 0) if prod else 0.0
+                        precio = st.number_input("Precio unit.", min_value=0.0, step=1000.0, value=precio_default, key=f"comp_precio_{i}")
+
+                    if prod_id:
+                        nombre_item = str(prod.get("nombre", "") or "")
+                        codigo_item = str(prod.get("codigo", "") or "")
+                        costo_item = float(prod.get("costo_unitario", 0) or 0)
+                    else:
+                        c4, c5 = st.columns([1.1, .7])
+                        with c4:
+                            nombre_item = st.text_input("Nombre ítem manual", value="", placeholder="Ej: Mano de obra", key=f"comp_manual_nombre_{i}")
+                        with c5:
+                            codigo_item = st.text_input("Código opcional", value="", key=f"comp_manual_codigo_{i}")
+                        costo_item = 0.0
+
+                    subtotal_linea = float(qty or 0) * float(precio or 0)
+                    subtotal_preview += subtotal_linea
+                    items_form.append({
+                        "producto_id": prod_id or None,
+                        "codigo": codigo_item,
+                        "nombre": nombre_item,
+                        "cantidad": qty,
+                        "costo_unitario": costo_item,
+                        "precio_unitario": precio,
+                        "subtotal": subtotal_linea,
+                    })
+                    st.caption(f"Subtotal línea: {money(subtotal_linea)}")
+
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    descuento = st.number_input("Descuento", min_value=0.0, step=1000.0, value=0.0)
+                total_preview = max(float(subtotal_preview or 0) - float(descuento or 0), 0)
+                with c2:
+                    valor_pagado = st.number_input("Valor pagado ahora", min_value=0.0, step=1000.0, value=float(total_preview or 0))
+                saldo_preview = max(total_preview - float(valor_pagado or 0), 0)
+                with c3:
+                    vencimiento = st.date_input("Vencimiento si queda saldo", value=date.today() + timedelta(days=7))
+
+                observaciones = st.text_area("Observaciones", placeholder="Condiciones, garantía, detalle de entrega, etc.")
+                enviar_cliente = st.checkbox("Enviar comprobante por WhatsApp al cliente", value=bool(cliente_obj.get("telefono")))
+                enviar_comerciante = st.checkbox("Enviar copia/resumen al WhatsApp del comerciante", value=True)
+
+                st.markdown(
+                    f"""
+                    <div class='receipt-shell'>
+                        <div class='receipt-top'>
+                            <div>
+                                <div class='receipt-title'>Vista previa comercial</div>
+                                <div class='receipt-sub'>Subtotal {money(subtotal_preview)} · Descuento {money(descuento)}</div>
+                            </div>
+                            <div class='receipt-chip'>{'PAGADO' if saldo_preview <= 0 else 'CON SALDO'}</div>
+                        </div>
+                        <div class='receipt-card'>
+                            <div class='receipt-row'><div class='receipt-label'>Cliente</div><div class='receipt-value'>{safe(cliente_obj.get('nombre','Cliente general'))}</div></div>
+                            <div class='receipt-row'><div class='receipt-label'>Pagado</div><div class='receipt-value'>{money(valor_pagado)}</div></div>
+                            <div class='receipt-row'><div class='receipt-label'>Saldo</div><div class='receipt-value'>{money(saldo_preview)}</div></div>
+                            <div class='receipt-total'><div>Total</div><div>{money(total_preview)}</div></div>
+                        </div>
+                        <div class='receipt-note'>Este será un comprobante interno, no una factura electrónica.</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                submit = st.form_submit_button("Generar comprobante de venta", type="primary", use_container_width=True)
+
+            if submit:
+                if not str(cliente_obj.get("nombre", "") or "").strip():
+                    st.error("Escribe o selecciona el nombre del cliente.")
+                elif total_preview <= 0:
+                    st.error("El total del comprobante debe ser mayor a cero.")
+                else:
+                    ok, msg, comprobante, items_guardados = crear_comprobante_venta(
+                        negocio,
+                        user_id,
+                        cliente_obj,
+                        items_form,
+                        fecha_venta,
+                        metodo,
+                        descuento,
+                        valor_pagado,
+                        vencimiento,
+                        observaciones,
+                        df_comprobantes,
+                    )
+                    if ok:
+                        if enviar_cliente and comprobante.get("telefono"):
+                            procesar_notificacion_whatsapp("Comprobante al cliente", comprobante.get("telefono"), mensaje_comprobante_cliente(negocio, comprobante))
+                        if enviar_comerciante and negocio.get("telefono"):
+                            procesar_notificacion_whatsapp("Copia al comerciante", negocio.get("telefono"), mensaje_comprobante_comerciante(negocio, comprobante))
+                        st.session_state["bradafin_ultimo_comprobante"] = {
+                            "comprobante": comprobante,
+                            "items": items_guardados.to_dict("records") if isinstance(items_guardados, pd.DataFrame) else [],
+                        }
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                        if "bradafin_comprobantes" in str(msg):
+                            st.info("Ejecuta el SQL de comprobantes en Supabase antes de usar este módulo.")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with col_help:
+            st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+            section_header("Qué hace este módulo", "Agiliza la venta sin reemplazar facturación electrónica.")
+            st.markdown(
+                """
+                - Genera un comprobante PDF premium.
+                - Registra la venta en movimientos.
+                - Descuenta inventario si usas productos registrados.
+                - Crea cuenta por cobrar si queda saldo.
+                - Guarda pago inicial como abono si aplica.
+                - Envía resumen por WhatsApp al cliente y comerciante.
+                """
+            )
+            st.warning("Nombre recomendado: comprobante interno de venta. No lo presentes como factura electrónica.")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    with tabs[1]:
+        st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
+        section_header("Historial de comprobantes", "Descargue PDF, revise saldos y reenvíe mensajes.")
+        if df_comprobantes.empty:
+            st.info("Aún no hay comprobantes. Si ya generaste uno y no aparece, revisa que las tablas nuevas existan en Supabase.")
+        else:
+            resumen = df_comprobantes[["fecha", "numero", "cliente_nombre", "total", "valor_pagado", "saldo_pendiente", "estado", "metodo_pago"]].copy()
+            try:
+                resumen["fecha"] = resumen["fecha"].dt.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+            st.dataframe(resumen.head(100), use_container_width=True, hide_index=True)
+
+            st.divider()
+            labels = {str(r["id"]): f"{r.get('numero','')} · {r.get('cliente_nombre','')} · {money(r.get('total',0))}" for _, r in df_comprobantes.head(80).iterrows()}
+            comp_id = st.selectbox("Comprobante", list(labels.keys()), format_func=lambda x: labels.get(x, x), key="hist_comp_select")
+            comp = df_comprobantes[df_comprobantes["id"].astype(str) == str(comp_id)].iloc[0].to_dict()
+            items = df_comprobante_items[df_comprobante_items["comprobante_id"].astype(str) == str(comp_id)].copy() if not df_comprobante_items.empty else pd.DataFrame()
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                pdf = generar_pdf_comprobante_venta(negocio, comp, items)
+                if pdf:
+                    st.download_button("Descargar PDF", data=pdf, file_name=f"comprobante_{comp.get('numero','bradafin')}.pdf", mime="application/pdf", use_container_width=True)
+                else:
+                    st.info("ReportLab no está disponible para generar PDF.")
+            with c2:
+                if st.button("Reenviar al cliente", use_container_width=True, disabled=not bool(comp.get("telefono"))):
+                    procesar_notificacion_whatsapp("Reenvío comprobante cliente", comp.get("telefono"), mensaje_comprobante_cliente(negocio, comp))
+                    st.rerun()
+            with c3:
+                if st.button("Enviar copia comerciante", use_container_width=True, disabled=not bool(negocio.get("telefono"))):
+                    procesar_notificacion_whatsapp("Reenvío comprobante comerciante", negocio.get("telefono"), mensaje_comprobante_comerciante(negocio, comp))
+                    st.rerun()
+
+            if not items.empty:
+                show_items = items[["codigo", "nombre", "cantidad", "precio_unitario", "subtotal"]].copy()
+                st.dataframe(show_items, use_container_width=True, hide_index=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+
 def render_reportes(negocio, user_id, df_movs, df_cuentas, df_productos):
     st.markdown("<div class='hero-card'><div class='hero-badge'>Reportes</div><div class='hero-title'>Diario, semanal y mensual.</div><div class='hero-sub'>PDF premium, Excel y balance empresarial para tomar decisiones.</div></div>", unsafe_allow_html=True)
     c1,c2 = st.columns([.8,.8])
@@ -4227,6 +5119,8 @@ def main():
     df_abonos = obtener_abonos(negocio_id)
     df_productos = obtener_productos(negocio_id)
     df_cajas = obtener_cajas(negocio_id)
+    df_comprobantes = obtener_comprobantes(negocio_id)
+    df_comprobante_items = obtener_comprobante_items(negocio_id)
 
     with st.sidebar:
         render_logo_sidebar(width_full=200, width_icon=74, show_name_fallback=not bool(BRADAFIN_LOGO_FULL_PATH))
@@ -4234,8 +5128,8 @@ def main():
         st.markdown(f"**{safe(negocio.get('nombre','Negocio'))}**", unsafe_allow_html=True)
         st.caption(email)
         st.divider()
-        paginas = ["Inicio", "Caja diaria", "Ventas y gastos", "Clientes", "Proveedores", "Cuentas", "Inventario", "Reportes", "Alertas", "BradaFin IA", "Perfil"]
-        iconos = {"Inicio":"🏠", "Caja diaria":"💵", "Ventas y gastos":"🧾", "Clientes":"👥", "Proveedores":"🚚", "Cuentas":"📌", "Inventario":"📦", "Reportes":"📊", "Alertas":"🔔", "BradaFin IA":"🤖", "Perfil":"⚙️"}
+        paginas = ["Inicio", "Caja diaria", "Ventas y gastos", "Comprobantes", "Clientes", "Proveedores", "Cuentas", "Inventario", "Reportes", "Alertas", "BradaFin IA", "Perfil"]
+        iconos = {"Inicio":"🏠", "Caja diaria":"💵", "Ventas y gastos":"🧾", "Comprobantes":"🧾", "Clientes":"👥", "Proveedores":"🚚", "Cuentas":"📌", "Inventario":"📦", "Reportes":"📊", "Alertas":"🔔", "BradaFin IA":"🤖", "Perfil":"⚙️"}
         for p in paginas:
             if st.button(f"{iconos.get(p,'•')} {p}", key=f"nav_{p}", use_container_width=True, type="primary" if st.session_state.pagina == p else "secondary"):
                 st.session_state.pagina = p
@@ -4248,6 +5142,7 @@ def main():
     if pagina == "Inicio": render_inicio(negocio, user_id, df_movs, df_cuentas, df_productos)
     elif pagina == "Caja diaria": render_caja(negocio, user_id, df_movs, df_cajas)
     elif pagina == "Ventas y gastos": render_ventas_gastos(negocio, user_id, df_productos, df_movs)
+    elif pagina == "Comprobantes": render_comprobantes(negocio, user_id, df_clientes, df_productos, df_comprobantes, df_comprobante_items)
     elif pagina == "Clientes": render_clientes(negocio, user_id, df_clientes, df_cuentas, df_abonos)
     elif pagina == "Proveedores": render_proveedores(negocio, user_id, df_proveedores)
     elif pagina == "Cuentas": render_cuentas(negocio, user_id, df_clientes, df_proveedores, df_cuentas, df_abonos)
